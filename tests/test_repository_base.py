@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from dockvault.models.repository import LocalRepository
 from dockvault.repository.base import BaseContainerRepositoryHandler
 from dockvault.repository.local import LocalRepositoryHandler
@@ -10,6 +12,14 @@ def test_get_environment_uses_password_env(monkeypatch) -> None:
     handler = LocalRepositoryHandler(LocalRepository(type="local", path="/repo"), SimpleNamespace())
 
     assert handler.get_environment() == {"RESTIC_PASSWORD": "secret"}
+
+
+def test_get_environment_raises_helpful_error_when_password_is_missing(monkeypatch) -> None:
+    monkeypatch.delenv("RESTIC_PASSWORD", raising=False)
+    handler = LocalRepositoryHandler(LocalRepository(type="local", path="/repo"), SimpleNamespace())
+
+    with pytest.raises(RuntimeError, match="Missing restic password environment variable RESTIC_PASSWORD"):
+        handler.get_environment()
 
 
 def test_launch_merges_volumes_and_removes_container(monkeypatch) -> None:

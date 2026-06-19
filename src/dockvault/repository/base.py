@@ -48,7 +48,14 @@ class BaseContainerRepositoryHandler:
         return container
 
     def get_environment(self) -> dict[str, str]:
-        return {"RESTIC_PASSWORD": os.environ[self.config.password_env]}
+        try:
+            password = os.environ[self.config.password_env]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Missing restic password environment variable {self.config.password_env}"
+            ) from exc
+
+        return {"RESTIC_PASSWORD": password}
 
     def build_volumes(self) -> dict[str, dict[str, str]]:
         return {}
