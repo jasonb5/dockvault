@@ -23,6 +23,7 @@ def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
             id=job.name,
             max_instances=1,
             replace_existing=True,
+            coalesce=True,
         )
 
 
