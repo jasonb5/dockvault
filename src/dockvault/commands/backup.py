@@ -17,13 +17,14 @@ from dockvault.repository.factory import create_repository_handler
 from dockvault.source.factory import create_source_handler
 
 logger = logging.getLogger(__name__)
+RESTIC_TIMEOUT_SECONDS = 6 * 60 * 60
 
 app = typer.Typer()
 
 
 @app.command()
 def list_jobs():
-    client = DockerClient.from_env()
+    client = _create_docker_client()
 
     jobs = get_jobs(client)
 
@@ -33,7 +34,7 @@ def list_jobs():
 
 @app.command()
 def create(name: str, hostname: Annotated[str | None, typer.Argument()] = None):
-    client = DockerClient.from_env()
+    client = _create_docker_client()
 
     labels = [
         f"dockvault.name={name}",
@@ -46,7 +47,7 @@ def create(name: str, hostname: Annotated[str | None, typer.Argument()] = None):
 
 
 def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
-    client = DockerClient.from_env()
+    client = _create_docker_client()
 
     source = create_source_handler(job.source)
     repository = create_repository_handler(job.repository, client)
@@ -59,7 +60,7 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
 
     with repository.launch(volumes) as container:
         try:
-            cmd = source.build_backup_command(repository.get_repo_path(), hostname)
+            cmd = _with_timeout(source.build_backup_command(repository.get_repo_path(), hostname))
 
             result = container.exec_run(cmd)
         except Exception as e:
@@ -109,6 +110,16 @@ def _job_context(job: BackupJobConfig, repository_path: str) -> str:
         f"job={job.name} volume={job.source.volume_name} "
         f"repo={repository_path} schedule={job.schedule}"
     )
+
+
+def _with_timeout(command: str) -> str:
+    return f"timeout {RESTIC_TIMEOUT_SECONDS}s {command}"
+
+
+def _create_docker_client() -> DockerClient:
+    from dockvault.docker import create_docker_client
+
+    return create_docker_client()
 
 
 def parser_restic_summary(lines: list[str]) -> ResticSummary | None:

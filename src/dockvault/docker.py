@@ -9,6 +9,16 @@ from pydantic import ValidationError
 from dockvault.models.job import BackupJobConfig, labels_to_config
 
 logger = logging.getLogger(__name__)
+DOCKER_TIMEOUT_SECONDS = 60
+
+
+def create_docker_client() -> DockerClient:
+    client = DockerClient.from_env()
+
+    if hasattr(client, "api") and hasattr(client.api, "timeout"):
+        client.api.timeout = DOCKER_TIMEOUT_SECONDS
+
+    return client
 
 
 def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[BackupJobConfig]:

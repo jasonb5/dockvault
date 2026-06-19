@@ -80,7 +80,7 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
         build_backup_command=lambda repository, hostname: f"backup to {repository} host={hostname}",
     )
 
-    monkeypatch.setattr(backup.DockerClient, "from_env", staticmethod(lambda: object()))
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
     monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
 
@@ -94,6 +94,54 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
     assert "Backup completed" in caplog.text
     assert "snapshot=abc123" in caplog.text
     assert "added=2.0 KiB" in caplog.text
+
+
+def test_run_backup_wraps_restic_command_with_timeout(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    seen = {}
+    container = SimpleNamespace(
+        exec_run=lambda cmd: seen.update({"cmd": cmd}) or SimpleNamespace(
+            output=_summary_bytes(),
+            exit_code=0,
+        )
+    )
+
+    class FakeRepository:
+        def launch(self, volumes):
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    source = SimpleNamespace(
+        get_volumes=lambda: {},
+        build_backup_command=lambda repository, hostname: "restic backup --json /data",
+    )
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("INFO")
+
+    backup.run_backup(job)
+
+    assert seen["cmd"].startswith("timeout ")
+    assert "restic backup --json /data" in seen["cmd"]
 
 
 def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
@@ -132,7 +180,7 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
         build_backup_command=lambda repository, hostname: "backup",
     )
 
-    monkeypatch.setattr(backup.DockerClient, "from_env", staticmethod(lambda: object()))
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
     monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
 
@@ -216,7 +264,7 @@ def _install_run_backup_env(monkeypatch, *, output: bytes | None, exit_code: int
         get_volumes=lambda: {},
         build_backup_command=lambda repository, hostname: "backup",
     )
-    monkeypatch.setattr(backup.DockerClient, "from_env", staticmethod(lambda: object()))
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
     monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: repo)
     return repo

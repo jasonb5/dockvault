@@ -2,17 +2,16 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from docker import DockerClient
 
 from dockvault.commands.backup import run_backup
-from dockvault.docker import get_jobs
+from dockvault.docker import create_docker_client, get_jobs
 
 logger = logging.getLogger(__name__)
 
 
 def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
     try:
-        client: DockerClient = DockerClient.from_env()
+        client = create_docker_client()
     except Exception as e:
         logger.warning("Reconcile loop could not connect to docker %s", e)
 

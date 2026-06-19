@@ -87,7 +87,7 @@ def test_reconcile_backups_schedules_each_job(monkeypatch) -> None:
         )
     ]
 
-    monkeypatch.setattr("dockvault.scheduler.DockerClient.from_env", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
     monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
     monkeypatch.setattr(
         "dockvault.scheduler.CronTrigger.from_crontab",
@@ -127,7 +127,7 @@ def test_reconcile_continues_scheduling_when_one_volume_has_invalid_labels(
     fake_scheduler = _FakeScheduler()
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     caplog.set_level(logging.WARNING)
@@ -153,7 +153,7 @@ def test_reconcile_continues_scheduling_when_one_cron_expression_is_invalid(
     fake_scheduler = _FakeScheduler()
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     caplog.set_level(logging.WARNING)
@@ -170,7 +170,7 @@ def test_reconcile_does_not_raise_when_docker_client_fails(
     def _raise():
         raise RuntimeError("docker socket unavailable")
 
-    monkeypatch.setattr("dockvault.scheduler.DockerClient.from_env", _raise)
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", _raise)
 
     fake_scheduler = _FakeScheduler(
         existing_ids=["reconcile-backups", "backup:a", "backup:b"]
@@ -193,7 +193,7 @@ def test_reconcile_does_not_raise_when_volume_listing_fails(
     broken_client = _BrokenClient(APIError("docker daemon is unreachable"))
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: broken_client
+        "dockvault.scheduler.create_docker_client", lambda: broken_client
     )
 
     fake_scheduler = _FakeScheduler(
@@ -224,7 +224,7 @@ def test_reconcile_continues_when_add_job_fails_for_one_job(
     fake_scheduler = _FakeScheduler(add_job_fails_for={"backup:explode"})
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     caplog.set_level(logging.WARNING)
@@ -252,7 +252,7 @@ def test_reconcile_removes_stale_backup_jobs_for_deleted_volumes(monkeypatch) ->
     )
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     reconcile_backups(fake_scheduler)
@@ -272,7 +272,7 @@ def test_reconcile_removes_all_backup_jobs_when_no_volumes_remain(monkeypatch) -
     )
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     reconcile_backups(fake_scheduler)
@@ -291,7 +291,7 @@ def test_reconcile_does_not_remove_jobs_for_volumes_still_present(monkeypatch) -
     )
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     reconcile_backups(fake_scheduler)
@@ -310,7 +310,7 @@ def test_reconcile_does_not_touch_non_backup_jobs(monkeypatch) -> None:
     )
 
     monkeypatch.setattr(
-        "dockvault.scheduler.DockerClient.from_env", lambda: fake_client
+        "dockvault.scheduler.create_docker_client", lambda: fake_client
     )
 
     reconcile_backups(fake_scheduler)
@@ -324,7 +324,7 @@ def test_reconcile_does_not_remove_anything_when_docker_call_fails(
     def _raise():
         raise RuntimeError("docker down")
 
-    monkeypatch.setattr("dockvault.scheduler.DockerClient.from_env", _raise)
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", _raise)
 
     fake_scheduler = _FakeScheduler(
         existing_ids=["reconcile-backups", "backup:a", "backup:b"]

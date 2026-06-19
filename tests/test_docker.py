@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from dockvault.docker import get_jobs
+from dockvault.docker import create_docker_client, get_jobs
 
 
 def test_get_jobs_adds_enabled_filter_and_builds_job_configs() -> None:
@@ -51,3 +51,18 @@ def test_get_jobs_adds_enabled_filter_and_builds_job_configs() -> None:
     assert jobs[1].source.volume_name == "volume-b"
     assert jobs[0].repository.path == "/repo-a"
     assert jobs[1].repository.path == "/repo-b"
+
+
+def test_create_docker_client_sets_timeout(monkeypatch) -> None:
+    class FakeAPI:
+        timeout = 0
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.api = FakeAPI()
+
+    monkeypatch.setattr("dockvault.docker.DockerClient.from_env", lambda: FakeClient())
+
+    client = create_docker_client()
+
+    assert client.api.timeout == 60
