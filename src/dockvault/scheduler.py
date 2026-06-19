@@ -11,20 +11,34 @@ logger = logging.getLogger(__name__)
 
 
 def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
-    client: DockerClient = DockerClient.from_env()
+    try:
+        client: DockerClient = DockerClient.from_env()
+    except Exception as e:
+        logger.warning("Reconcile loop could not connect to docker %s", e)
 
-    jobs = get_jobs(client)
+        return
 
-    for job in jobs:
-        scheduled = scheduler.add_job(
-            run_backup,
-            trigger=CronTrigger.from_crontab(job.schedule, timezone="UTC"),
-            args=[job, "charon"],  # TODO: auto detect hostname, allow user to override
-            id=f"backup:{job.name}",
-            max_instances=1,
-            replace_existing=True,
-            coalesce=True,
-        )
+    ids: list[str] = list()
+
+    for job in get_jobs(client):
+        try:
+            _ = scheduler.add_job(
+                run_backup,
+                trigger=CronTrigger.from_crontab(job.schedule, timezone="UTC"),
+                args=[job, "charon"],  # TODO: auto detect hostname, allow user to override
+                id=f"backup:{job.name}",
+                max_instances=1,
+                replace_existing=True,
+                coalesce=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to add job=%s: %s", job.name, e)
+        finally:
+            ids.append(f"backup:{job.name}")
+
+    for job in scheduler.get_jobs():
+        if job.id.startswith("backup:") and job.id not in ids:
+            scheduler.remove_job(job.id)
 
 
 def create_scheduler() -> AsyncIOScheduler:

@@ -1,11 +1,17 @@
+import json
+import logging
+from collections.abc import Iterator
+
 from docker import DockerClient
+from docker.errors import APIError
+from pydantic import ValidationError
 
 from dockvault.models.job import BackupJobConfig, labels_to_config
 
+logger = logging.getLogger(__name__)
 
-def get_jobs(client: DockerClient, labels: list[str] | None = None) -> list[BackupJobConfig]:
-    jobs: list[BackupJobConfig] = []
 
+def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[BackupJobConfig]:
     if labels is None:
         labels = []
 
@@ -14,17 +20,31 @@ def get_jobs(client: DockerClient, labels: list[str] | None = None) -> list[Back
     filters = {
         "label": labels,
     }
-    raw_volumes = client.volumes.list(filters=filters)
+
+    try:
+        raw_volumes = client.volumes.list(filters=filters)
+    except APIError as e:
+        logger.warning("Failed to list docker volumes %s", e)
+
+        return
 
     for volume in raw_volumes:
-        config = labels_to_config(volume.attrs["Labels"])
-        config["source"]["volume_name"] = volume.name
+        try:
+            config = labels_to_config(volume.attrs["Labels"])
+        except Exception:
+            logger.warning("Failed to convert labels for volume %s to config", volume.name)
+
+            continue
+
+        try:
+            config["source"]["volume_name"] = volume.name
+        except KeyError:
+            config["source"] = {"volume_name": volume.name}
 
         if not config.get("name"):
             config["name"] = volume.name
 
-        job = BackupJobConfig.model_validate(config)
-
-        jobs.append(job)
-
-    return jobs
+        try:
+            yield BackupJobConfig.model_validate(config)
+        except ValidationError:
+            logger.warning("Failed to parse labels %s", json.dumps(config))
