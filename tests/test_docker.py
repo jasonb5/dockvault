@@ -39,7 +39,7 @@ def test_get_jobs_adds_enabled_filter_and_builds_job_configs() -> None:
             return [volume_with_name, volume_without_name]
 
     labels = ["dockvault.name=nightly"]
-    jobs = get_jobs(FakeClient(), labels)
+    jobs = list(get_jobs(FakeClient(), labels))
 
     assert captured_filters == {
         "label": ["dockvault.name=nightly", "dockvault.enabled"],

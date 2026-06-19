@@ -50,28 +50,28 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
 
     source = create_source_handler(job.source)
     repository = create_repository_handler(job.repository, client)
+    context = _job_context(job, repository.get_repo_path())
 
     volumes = source.get_volumes()
+    logger.info("Starting backup %s", context)
 
     result: ExecResult | None = None
 
     with repository.launch(volumes) as container:
         try:
-            repo_path = repository.get_repo_path()
-
-            cmd = source.build_backup_command(repo_path, hostname)
+            cmd = source.build_backup_command(repository.get_repo_path(), hostname)
 
             result = container.exec_run(cmd)
         except Exception as e:
-            logger.error("Backup job %s failed with %s", job.name, e)
+            logger.error("Backup failed %s error=%s", context, e)
         finally:
             if result is None:
-                logger.error("Backup job %s produced no result", job.name)
+                logger.error("Backup produced no result %s", context)
             else:
-                report_result(job, result)
+                report_result(job, context, result)
 
 
-def report_result(job: BackupJobConfig, result: ExecResult) -> None:
+def report_result(job: BackupJobConfig, context: str, result: ExecResult) -> None:
     lines = cast(bytes, result.output or b"").decode("utf-8").splitlines()
 
     match result.exit_code:
@@ -80,29 +80,35 @@ def report_result(job: BackupJobConfig, result: ExecResult) -> None:
 
             if msg:
                 logger.info(
-                    "Backup completed volume=%s snapshot=%s files=%s added=%s duration=%s",
-                    job.name,
+                    "Backup completed %s snapshot=%s files=%s added=%s duration=%s",
+                    context,
                     msg.snapshot_id,
                     msg.files_changed,
                     _format_bytes(msg.data_added),
                     msg.total_duration,
                 )
             else:
-                logger.warning("Could not parse Restic output from backup job %s", job.name)
+                logger.warning("Could not parse Restic output %s", context)
         case 1:
             msg = parser_restic_exit_error(lines)
 
             if msg:
                 logger.warning(
-                    "Backup failed volume=%s repository=%s error=%s",
-                    job.name,
-                    job.repository.path,
+                    "Backup failed %s error=%s",
+                    context,
                     msg.message,
                 )
             else:
-                logger.warning("Could not parse Restic output from backup job %s", job.name)
+                logger.warning("Could not parse Restic output %s", context)
         case code:
-            logger.warning("Unknown restic exit code %s for backup job %s", code, job.name)
+            logger.warning("Unknown restic exit code %s %s", code, context)
+
+
+def _job_context(job: BackupJobConfig, repository_path: str) -> str:
+    return (
+        f"job={job.name} volume={job.source.volume_name} "
+        f"repo={repository_path} schedule={job.schedule}"
+    )
 
 
 def parser_restic_summary(lines: list[str]) -> ResticSummary | None:

@@ -88,6 +88,9 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
 
     backup.run_backup(job, hostname="charon")
 
+    assert "Starting backup" in caplog.text
+    assert "job=media" in caplog.text
+    assert "repo=/repo" in caplog.text
     assert "Backup completed" in caplog.text
     assert "snapshot=abc123" in caplog.text
     assert "added=2.0 KiB" in caplog.text
@@ -138,6 +141,8 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
     backup.run_backup(job)
 
     assert "Backup failed" in caplog.text
+    assert "job=media" in caplog.text
+    assert "repo=/repo" in caplog.text
     assert "repository does not exist" in caplog.text
     # A backup failure must be visible at default log level (WARNING+);
     # it must not be buried alongside ordinary INFO chatter.
