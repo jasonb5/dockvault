@@ -16,6 +16,17 @@ class BackupJobConfig(BaseModel):
 
 
 def labels_to_config(labels: dict[str, str]) -> dict[str, Any]:
+    """Unflatten ``dockvault.*`` Docker labels into a nested config dict.
+
+    Values are kept as raw strings; any type coercion (bool, int, list, ...)
+    is delegated to the Pydantic model that ultimately validates the result.
+    This avoids the historical bug where any value containing a comma was
+    silently turned into a list regardless of the target field's type.
+
+    Raises ``ValueError`` when two labels disagree about whether a key is a
+    scalar value or a nested object (e.g. both ``dockvault.source`` and
+    ``dockvault.source.type`` are set).
+    """
     config: dict[str, Any] = {}
 
     for key, value in labels.items():
@@ -23,21 +34,28 @@ def labels_to_config(labels: dict[str, str]) -> dict[str, Any]:
             continue
 
         parts = key.removeprefix(PREFIX).split(".")
-        current = config
+        current: dict[str, Any] = config
 
-        for part in parts[:-1]:
-            current = current.setdefault(part, {})
+        for depth, part in enumerate(parts[:-1]):
+            existing = current.get(part)
+            if existing is None:
+                current[part] = {}
+            elif not isinstance(existing, dict):
+                conflict = PREFIX + ".".join(parts[: depth + 1])
+                raise ValueError(
+                    f"label {key!r} conflicts with {conflict!r}: "
+                    f"{conflict!r} was set as a scalar but {key!r} requires "
+                    f"a nested object at that path",
+                )
+            current = current[part]
 
-        current[parts[-1]] = parse_label_value(value)
+        leaf = parts[-1]
+        if isinstance(current.get(leaf), dict):
+            raise ValueError(
+                f"label {key!r} conflicts with nested labels already set "
+                f"under {key + '.'!r}: cannot overwrite a nested object with "
+                f"a scalar value",
+            )
+        current[leaf] = value
 
     return config
-
-
-def parse_label_value(value: str) -> Any:
-    if "," in value:
-        return [item.strip() for item in value.split(",") if item.strip()]
-
-    if value.lower() in {"true", "false"}:
-        return value.lower() == "true"
-
-    return value
