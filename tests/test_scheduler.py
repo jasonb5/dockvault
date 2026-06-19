@@ -43,7 +43,8 @@ def test_reconcile_backups_schedules_each_job(monkeypatch) -> None:
     assert kwargs == {
         "trigger": "cron:0 1 * * *:UTC",
         "args": [jobs[0], "charon"],
-        "id": "media",
+        "id": "backup:media",
         "max_instances": 1,
         "replace_existing": True,
+        "coalesce": True,
     }
