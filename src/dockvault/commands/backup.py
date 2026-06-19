@@ -3,10 +3,16 @@ from typing import Annotated, cast
 
 import typer
 from docker import DockerClient
+from docker.models.containers import ExecResult
+from pydantic import ValidationError
 
 from dockvault.docker import get_jobs
 from dockvault.models.job import BackupJobConfig
-from dockvault.models.restic import ResticExitError, ResticMessageAdapter, ResticSummary
+from dockvault.models.restic import (
+    ResticExitError,
+    ResticMessageAdapter,
+    ResticSummary,
+)
 from dockvault.repository.factory import create_repository_handler
 from dockvault.source.factory import create_source_handler
 
@@ -16,7 +22,7 @@ app = typer.Typer()
 
 
 @app.command()
-def list():
+def list_jobs():
     client = DockerClient.from_env()
 
     jobs = get_jobs(client)
@@ -47,36 +53,86 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
 
     volumes = source.get_volumes()
 
+    result: ExecResult | None = None
+
     with repository.launch(volumes) as container:
-        repo_path = repository.get_repo_path()
+        try:
+            repo_path = repository.get_repo_path()
 
-        cmd = source.build_backup_command(repo_path, hostname)
+            cmd = source.build_backup_command(repo_path, hostname)
 
-        result = container.exec_run(cmd)
+            result = container.exec_run(cmd)
+        except Exception as e:
+            logger.error("Backup job %s failed with %s", job.name, e)
+        finally:
+            if result is None:
+                logger.error("Backup job %s produced no result", job.name)
+            else:
+                report_result(job, result)
 
-        output = [
-            ResticMessageAdapter.validate_json(x)
-            for x in cast(bytes, result.output).decode("utf-8").splitlines()
-        ]
 
-        final = output[-1]
+def report_result(job: BackupJobConfig, result: ExecResult) -> None:
+    lines = cast(bytes, result.output or b"").decode("utf-8").splitlines()
 
-        if isinstance(final, ResticSummary):
-            logger.info(
-                "Backup completed volume=%s snapshot=%s files=%s added=%s duration=%s",
-                job.name,
-                final.snapshot_id,
-                final.files_changed,
-                _format_bytes(final.data_added),
-                final.total_duration,
-            )
-        elif isinstance(final, ResticExitError):
-            logger.info(
-                "Backup failed volume=%s repository=%s error=%s",
-                job.name,
-                job.repository.path,
-                final.message,
-            )
+    match result.exit_code:
+        case 0:
+            msg = parser_restic_summary(lines)
+
+            if msg:
+                logger.info(
+                    "Backup completed volume=%s snapshot=%s files=%s added=%s duration=%s",
+                    job.name,
+                    msg.snapshot_id,
+                    msg.files_changed,
+                    _format_bytes(msg.data_added),
+                    msg.total_duration,
+                )
+            else:
+                logger.warning("Could not parse Restic output from backup job %s", job.name)
+        case 1:
+            msg = parser_restic_exit_error(lines)
+
+            if msg:
+                logger.warning(
+                    "Backup failed volume=%s repository=%s error=%s",
+                    job.name,
+                    job.repository.path,
+                    msg.message,
+                )
+            else:
+                logger.warning("Could not parse Restic output from backup job %s", job.name)
+        case code:
+            logger.warning("Unknown restic exit code %s for backup job %s", code, job.name)
+
+
+def parser_restic_summary(lines: list[str]) -> ResticSummary | None:
+    for line in reversed(lines):
+        try:
+            msg = ResticMessageAdapter.validate_json(line)
+        except ValidationError:
+            logger.debug("Failed to parse restic message=%s", line)
+
+            continue
+
+        if msg.message_type == "summary":
+            return msg
+
+    return None
+
+
+def parser_restic_exit_error(lines: list[str]) -> ResticExitError | None:
+    for line in reversed(lines):
+        try:
+            msg = ResticMessageAdapter.validate_json(line)
+        except ValidationError:
+            logger.debug("Failed to parse restic message=%s", line)
+
+            continue
+
+        if msg.message_type == "exit_error":
+            return msg
+
+    return None
 
 
 def _format_bytes(num: int) -> str:

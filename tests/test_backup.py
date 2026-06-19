@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 
+import logging
+
 from dockvault.commands import backup
 from dockvault.models.job import BackupJobConfig
-from dockvault.models.restic import ResticExitError, ResticSummary
+from dockvault.models.restic import ResticExitError, ResticStatus, ResticSummary
 from dockvault.source.files import FilesBackupHandler
 
 
@@ -50,7 +52,12 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
         data_added=2048,
         total_duration=1.5,
     )
-    container = SimpleNamespace(exec_run=lambda cmd: SimpleNamespace(output=summary.model_dump_json().encode("utf-8")))
+    container = SimpleNamespace(
+        exec_run=lambda cmd: SimpleNamespace(
+            output=summary.model_dump_json().encode("utf-8"),
+            exit_code=0,
+        )
+    )
 
     class FakeRepository:
         def launch(self, volumes):
@@ -96,7 +103,12 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
         }
     )
     error = ResticExitError(message_type="exit_error", code=1, message="repository does not exist")
-    container = SimpleNamespace(exec_run=lambda cmd: SimpleNamespace(output=error.model_dump_json().encode("utf-8")))
+    container = SimpleNamespace(
+        exec_run=lambda cmd: SimpleNamespace(
+            output=error.model_dump_json().encode("utf-8"),
+            exit_code=1,
+        )
+    )
 
     class FakeRepository:
         def launch(self, volumes):
@@ -121,9 +133,258 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
     monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
 
-    caplog.set_level("INFO")
+    caplog.set_level("DEBUG")
 
     backup.run_backup(job)
 
     assert "Backup failed" in caplog.text
     assert "repository does not exist" in caplog.text
+    # A backup failure must be visible at default log level (WARNING+);
+    # it must not be buried alongside ordinary INFO chatter.
+    failure_records = [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING and "Backup failed" in r.getMessage()
+    ]
+    assert failure_records, (
+        f"'Backup failed' must be logged at WARNING+, got:\n{caplog.text}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C2: run_backup must surface failures rather than swallow / crash on them.
+#
+# Helpers below construct a minimal run_backup environment with a fake
+# repository / source / docker client. They let each test focus on what
+# exec_run returns (output bytes + exit_code) and what the consequences
+# should be.
+# ---------------------------------------------------------------------------
+
+
+_JOB_LABELS = {
+    "name": "media",
+    "schedule": "0 1 * * *",
+    "source": {"type": "files", "volume_name": "media-volume"},
+    "repository": {"type": "local", "path": "/repo"},
+}
+
+
+def _make_job() -> BackupJobConfig:
+    return BackupJobConfig.model_validate(_JOB_LABELS)
+
+
+class _FakeRepository:
+    """Records context-manager lifecycle so tests can assert cleanup ran."""
+
+    def __init__(self, container) -> None:
+        self._container = container
+        self.entered = False
+        self.exited = False
+
+    def launch(self, volumes):
+        outer = self
+
+        class _Context:
+            def __enter__(self_inner):
+                outer.entered = True
+                return outer._container
+
+            def __exit__(self_inner, exc_type, exc, tb):
+                outer.exited = True
+                return False
+
+        return _Context()
+
+    def get_repo_path(self) -> str:
+        return "/repo"
+
+
+def _install_run_backup_env(monkeypatch, *, output: bytes | None, exit_code: int = 0) -> _FakeRepository:
+    """Wire up monkeypatches so run_backup uses fake source / repo / client.
+
+    Returns the fake repository so tests can assert on lifecycle state.
+    """
+    container = SimpleNamespace(
+        exec_run=lambda cmd: SimpleNamespace(output=output, exit_code=exit_code),
+    )
+    repo = _FakeRepository(container)
+    source = SimpleNamespace(
+        get_volumes=lambda: {},
+        build_backup_command=lambda repository, hostname: "backup",
+    )
+    monkeypatch.setattr(backup.DockerClient, "from_env", staticmethod(lambda: object()))
+    monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: repo)
+    return repo
+
+
+def _summary_bytes() -> bytes:
+    return ResticSummary(
+        message_type="summary",
+        snapshot_id="abc123",
+        files_changed=2,
+        data_added=2048,
+        total_duration=1.5,
+    ).model_dump_json().encode("utf-8")
+
+
+def _status_bytes(percent: float = 0.5) -> bytes:
+    return ResticStatus(
+        message_type="status",
+        percent_done=percent,
+    ).model_dump_json().encode("utf-8")
+
+
+def _warning_records_for(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# --- non-zero OS exit codes ------------------------------------------------
+
+
+def test_run_backup_logs_failure_when_exit_code_nonzero_without_summary(monkeypatch, caplog) -> None:
+    """OS-level non-zero exit (restic crashed before producing JSON, OOM-kill,
+    container died, ...) must be reported. The current code silently inspects
+    output[-1] and returns without logging anything."""
+    repo = _install_run_backup_env(monkeypatch, output=b"", exit_code=137)
+    caplog.set_level("DEBUG")
+
+    backup.run_backup(_make_job())
+
+    failures = _warning_records_for(caplog)
+    assert failures, f"expected a WARNING+ log for the failure, got:\n{caplog.text}"
+    combined = "\n".join(r.getMessage() for r in failures)
+    assert "media" in combined
+    assert "137" in combined
+    assert repo.exited, "container cleanup must run even when the backup failed"
+
+
+def test_run_backup_does_not_log_success_when_exit_code_is_nonzero_even_with_summary(
+    monkeypatch, caplog,
+) -> None:
+    """If restic exits non-zero we cannot trust 'Backup completed' even when a
+    summary message is present in the stream. Restic exit code 1 = hard
+    failure; exit code 3 = partial failure (some files unreadable). In both
+    cases the operator must see a warning, not a success line."""
+    _install_run_backup_env(monkeypatch, output=_summary_bytes(), exit_code=3)
+    caplog.set_level("DEBUG")
+
+    backup.run_backup(_make_job())
+
+    assert "Backup completed" not in caplog.text, (
+        "must not log unconditional success when restic exit_code != 0"
+    )
+    assert _warning_records_for(caplog), (
+        f"expected a WARNING+ log when exit_code != 0, got:\n{caplog.text}"
+    )
+
+
+# --- empty / None output ----------------------------------------------------
+
+
+def test_run_backup_logs_failure_when_output_is_empty(monkeypatch, caplog) -> None:
+    """`output[-1]` on an empty list raises IndexError today. Empty output is
+    realistic (exec failed to start, restic killed before first line)."""
+    repo = _install_run_backup_env(monkeypatch, output=b"", exit_code=0)
+    caplog.set_level("DEBUG")
+
+    backup.run_backup(_make_job())  # must not raise
+
+    assert _warning_records_for(caplog), (
+        f"expected a WARNING+ log when restic produced no output, got:\n{caplog.text}"
+    )
+    assert repo.exited
+
+
+def test_run_backup_logs_failure_when_output_is_none(monkeypatch, caplog) -> None:
+    """`result.output` can be None when the exec fails to start. Today this
+    blows up with `AttributeError: 'NoneType' object has no attribute 'decode'`."""
+    repo = _install_run_backup_env(monkeypatch, output=None, exit_code=1)
+    caplog.set_level("DEBUG")
+
+    backup.run_backup(_make_job())  # must not raise
+
+    assert _warning_records_for(caplog), (
+        f"expected a WARNING+ log when restic output was None, got:\n{caplog.text}"
+    )
+    assert repo.exited
+
+
+# --- weird shapes of valid output ------------------------------------------
+
+
+def test_run_backup_finds_summary_even_when_status_messages_follow_it(
+    monkeypatch, caplog,
+) -> None:
+    """Today's code only looks at output[-1]. If restic emits a status update
+    after the summary (which it can, depending on flush timing), the summary
+    is invisible and the run is treated as 'unknown' / silent."""
+    output = b"\n".join([_status_bytes(0.3), _summary_bytes(), _status_bytes(1.0)])
+    _install_run_backup_env(monkeypatch, output=output, exit_code=0)
+    caplog.set_level("INFO")
+
+    backup.run_backup(_make_job())
+
+    assert "Backup completed" in caplog.text
+    assert "snapshot=abc123" in caplog.text
+
+
+def test_run_backup_logs_failure_when_only_status_messages_present(
+    monkeypatch, caplog,
+) -> None:
+    """If the stream contains only progress lines (e.g. restic was killed
+    mid-run), today neither the summary nor the exit-error branch matches
+    and run_backup returns silently. That's a false positive."""
+    output = b"\n".join([_status_bytes(0.1), _status_bytes(0.5), _status_bytes(0.9)])
+    _install_run_backup_env(monkeypatch, output=output, exit_code=0)
+    caplog.set_level("DEBUG")
+
+    backup.run_backup(_make_job())
+
+    assert "Backup completed" not in caplog.text
+    assert _warning_records_for(caplog), (
+        f"expected a WARNING+ log when no summary or exit error was produced, got:\n{caplog.text}"
+    )
+
+
+# --- non-JSON lines mixed with valid JSON ----------------------------------
+
+
+def test_run_backup_ignores_non_json_lines_and_still_finds_summary(
+    monkeypatch, caplog,
+) -> None:
+    """exec_run defaults to demux=False, so stderr is interleaved into the
+    same byte stream. Restic prints warnings ('unable to read xattrs', lock
+    messages, ...) to stderr. Today the first non-JSON line raises
+    ValidationError and propagates out of run_backup, killing the run AND
+    leaving the caller (APScheduler) with an uncontextualised traceback."""
+    output = b"\n".join(
+        [
+            b"Fatal: warning printed before --json took effect",
+            _summary_bytes(),
+            b"unable to read xattrs on /data/something",
+        ]
+    )
+    _install_run_backup_env(monkeypatch, output=output, exit_code=0)
+    caplog.set_level("INFO")
+
+    backup.run_backup(_make_job())  # must not raise
+
+    assert "Backup completed" in caplog.text
+
+
+def test_run_backup_does_not_raise_when_all_output_lines_are_unparseable(
+    monkeypatch, caplog,
+) -> None:
+    """If *every* line is garbage (restic dumped a traceback, container
+    printed shell errors), we should treat the run as failed and log it,
+    not propagate a ValidationError."""
+    output = b"Traceback (most recent call last):\n  File ...\nValueError: boom"
+    repo = _install_run_backup_env(monkeypatch, output=output, exit_code=1)
+    caplog.set_level("DEBUG")
+
+    backup.run_backup(_make_job())  # must not raise
+
+    assert _warning_records_for(caplog), (
+        f"expected a WARNING+ log when output was entirely unparseable, got:\n{caplog.text}"
+    )
+    assert repo.exited

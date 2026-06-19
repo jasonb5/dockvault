@@ -17,7 +17,9 @@ def test_backup_list_prints_job_names(monkeypatch) -> None:
 
     monkeypatch.setattr(backup_module.DockerClient, "from_env", staticmethod(lambda: FakeVolumeClient()))
 
-    result = CliRunner().invoke(app, ["backup", "list"])
+    # The python function is now `list_jobs` (to avoid shadowing the builtin);
+    # typer derives the CLI subcommand name from it as `list-jobs`.
+    result = CliRunner().invoke(app, ["backup", "list-jobs"])
 
     assert result.exit_code == 0
     assert result.stdout == "alpha\n"
