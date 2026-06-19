@@ -20,7 +20,7 @@ def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
             run_backup,
             trigger=CronTrigger.from_crontab(job.schedule, timezone="UTC"),
             args=[job, "charon"],  # TODO: auto detect hostname, allow user to override
-            id=job.name,
+            id=f"backup:{job.name}",
             max_instances=1,
             replace_existing=True,
             coalesce=True,
