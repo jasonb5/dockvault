@@ -81,6 +81,23 @@ def test_create_scheduler_registers_reconcile_job() -> None:
     assert isinstance(job.args[1], threading.BoundedSemaphore)
 
 
+def test_create_scheduler_logs_configuration(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("DOCKVAULT_MAX_CONCURRENT_BACKUPS", "2")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_SCHEDULE", "30 3 * * *")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_ARGS", "--keep-last 7")
+
+    caplog.set_level(logging.INFO)
+
+    scheduler = create_scheduler()
+
+    assert scheduler.get_job("reconcile-backups") is not None
+    assert any(
+        "Scheduler configured max_concurrent_backups=2 retention_enabled=True retention_schedule=30 3 * * *"
+        in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_reconcile_backups_schedules_each_job(monkeypatch) -> None:
     fake_scheduler = _FakeScheduler()
     jobs = [
@@ -117,6 +134,38 @@ def test_reconcile_backups_schedules_each_job(monkeypatch) -> None:
         "replace_existing": True,
         "coalesce": True,
     }
+
+
+def test_reconcile_logs_summary(monkeypatch, caplog) -> None:
+    fake_scheduler = _FakeScheduler(existing_ids=["reconcile-backups", "backup:gone"])
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-volume"},
+                "repository": {"type": "local", "path": "/repo"},
+            }
+        )
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
+    monkeypatch.setattr(
+        "dockvault.scheduler.CronTrigger.from_crontab",
+        lambda schedule, timezone: f"cron:{schedule}:{timezone}",
+    )
+
+    caplog.set_level(logging.INFO)
+
+    reconcile_backups(fake_scheduler, threading.BoundedSemaphore(1))
+
+    assert any(
+        "Reconcile complete discovered_jobs=1 scheduled_backup_jobs=1 failed_backup_jobs=0 scheduled_retention_jobs=0 failed_retention_jobs=0 removed_backup_jobs=1 removed_retention_jobs=0"
+        in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_reconcile_uses_hostname_override_when_present(monkeypatch) -> None:

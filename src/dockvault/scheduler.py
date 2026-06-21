@@ -159,6 +159,10 @@ def reconcile_backups(
     hostname = _get_backup_hostname()
     retention_ids: list[str] = []
     repositories: dict[str, BackupRepository] = {}
+    scheduled_backup_jobs = 0
+    failed_backup_jobs = 0
+    scheduled_retention_jobs = 0
+    failed_retention_jobs = 0
 
     for job in jobs:
         repositories.setdefault(_retention_job_id(job.repository), job.repository)
@@ -173,7 +177,9 @@ def reconcile_backups(
                 replace_existing=True,
                 coalesce=True,
             )
+            scheduled_backup_jobs += 1
         except Exception as e:
+            failed_backup_jobs += 1
             logger.warning("Failed to add job=%s: %s", job.name, e)
         finally:
             ids.append(f"backup:{job.name}")
@@ -192,7 +198,9 @@ def reconcile_backups(
                     replace_existing=True,
                     coalesce=True,
                 )
+                scheduled_retention_jobs += 1
             except Exception as e:
+                failed_retention_jobs += 1
                 logger.warning(
                     "Failed to add retention job repo=%s: %s",
                     _retention_repo_name(repository),
@@ -201,16 +209,41 @@ def reconcile_backups(
             finally:
                 retention_ids.append(retention_id)
 
+    removed_backup_jobs = 0
+    removed_retention_jobs = 0
+
     for job in scheduler.get_jobs():
         if job.id.startswith("backup:") and job.id not in ids:
             scheduler.remove_job(job.id)
+            removed_backup_jobs += 1
         if job.id.startswith("retention:") and job.id not in retention_ids:
             scheduler.remove_job(job.id)
+            removed_retention_jobs += 1
+
+    logger.info(
+        "Reconcile complete discovered_jobs=%s scheduled_backup_jobs=%s failed_backup_jobs=%s scheduled_retention_jobs=%s failed_retention_jobs=%s removed_backup_jobs=%s removed_retention_jobs=%s",
+        len(jobs),
+        scheduled_backup_jobs,
+        failed_backup_jobs,
+        scheduled_retention_jobs,
+        failed_retention_jobs,
+        removed_backup_jobs,
+        removed_retention_jobs,
+    )
 
 
 def create_scheduler() -> AsyncIOScheduler:
     scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone="UTC")
-    semaphore = threading.BoundedSemaphore(_get_max_concurrent_backups())
+    max_concurrent_backups = _get_max_concurrent_backups()
+    retention_schedule = _get_retention_schedule()
+    semaphore = threading.BoundedSemaphore(max_concurrent_backups)
+
+    logger.info(
+        "Scheduler configured max_concurrent_backups=%s retention_enabled=%s retention_schedule=%s",
+        max_concurrent_backups,
+        _retention_is_enabled(),
+        retention_schedule,
+    )
 
     _ = scheduler.add_job(
         reconcile_backups,
