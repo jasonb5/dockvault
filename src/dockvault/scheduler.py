@@ -1,6 +1,7 @@
 import logging
 import os
 import socket
+import hashlib
 import threading
 import time
 
@@ -8,8 +9,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from dockvault.commands.backup import run_backup
+from dockvault.commands.retention import run_retention
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 from dockvault.models.job import BackupJobConfig
+from dockvault.models.repository import BackupRepository
 
 logger = logging.getLogger(__name__)
 JOB_DISCOVERY_ATTEMPTS = 3
@@ -52,6 +55,41 @@ def _get_max_concurrent_backups() -> int:
     return value
 
 
+def _get_retention_schedule() -> str | None:
+    value = os.getenv("DOCKVAULT_RETENTION_SCHEDULE")
+
+    if value is None or not value.strip():
+        return None
+
+    return value.strip()
+
+
+def _retention_is_enabled() -> bool:
+    if _get_retention_schedule() is None:
+        return False
+
+    retention_args = os.getenv("DOCKVAULT_RETENTION_ARGS")
+
+    if retention_args is None or not retention_args.strip():
+        logger.warning(
+            "Retention schedule configured but DOCKVAULT_RETENTION_ARGS is empty; skipping retention scheduling",
+        )
+        return False
+
+    return True
+
+
+def _retention_job_id(repository: BackupRepository) -> str:
+    key = f"{repository.type}:{repository.path}:{repository.password_env}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+    return f"retention:{digest}"
+
+
+def _retention_repo_name(repository: BackupRepository) -> str:
+    return repository.path
+
+
 def run_backup_limited(
     job: BackupJobConfig,
     hostname: str | None,
@@ -63,6 +101,21 @@ def run_backup_limited(
 
     try:
         run_backup(job, hostname)
+    finally:
+        semaphore.release()
+
+
+def run_retention_limited(
+    repository: BackupRepository,
+    repo_name: str,
+    semaphore: threading.BoundedSemaphore,
+) -> None:
+    if not semaphore.acquire(blocking=False):
+        logger.info("Retention waiting for concurrency slot repo=%s", repo_name)
+        semaphore.acquire()
+
+    try:
+        run_retention(repository, repo_name)
     finally:
         semaphore.release()
 
@@ -104,8 +157,12 @@ def reconcile_backups(
         return
 
     hostname = _get_backup_hostname()
+    retention_ids: list[str] = []
+    repositories: dict[str, BackupRepository] = {}
 
     for job in jobs:
+        repositories.setdefault(_retention_job_id(job.repository), job.repository)
+
         try:
             _ = scheduler.add_job(
                 run_backup_limited,
@@ -121,8 +178,33 @@ def reconcile_backups(
         finally:
             ids.append(f"backup:{job.name}")
 
+    if _retention_is_enabled():
+        retention_schedule = _get_retention_schedule()
+
+        for retention_id, repository in repositories.items():
+            try:
+                _ = scheduler.add_job(
+                    run_retention_limited,
+                    trigger=CronTrigger.from_crontab(retention_schedule, timezone="UTC"),
+                    args=[repository, _retention_repo_name(repository), semaphore],
+                    id=retention_id,
+                    max_instances=1,
+                    replace_existing=True,
+                    coalesce=True,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to add retention job repo=%s: %s",
+                    _retention_repo_name(repository),
+                    e,
+                )
+            finally:
+                retention_ids.append(retention_id)
+
     for job in scheduler.get_jobs():
         if job.id.startswith("backup:") and job.id not in ids:
+            scheduler.remove_job(job.id)
+        if job.id.startswith("retention:") and job.id not in retention_ids:
             scheduler.remove_job(job.id)
 
 

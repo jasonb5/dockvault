@@ -10,6 +10,8 @@ services:
       RESTIC_PASSWORD: change-me
       DOCKVAULT_HOSTNAME: dockvault
       DOCKVAULT_MAX_CONCURRENT_BACKUPS: "1"
+      DOCKVAULT_RETENTION_SCHEDULE: "30 3 * * *"
+      DOCKVAULT_RETENTION_ARGS: "--keep-last 7 --keep-daily 14 --keep-weekly 8"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /srv/restic:/srv/restic

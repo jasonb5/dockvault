@@ -76,8 +76,14 @@ Optional:
   Hostname to attach to backups. If unset, Dockvault uses the current host
   name.
 - `DOCKVAULT_MAX_CONCURRENT_BACKUPS`
-  Global limit for concurrently running scheduled backups across all jobs.
+  Global limit for concurrently running scheduled backup and retention jobs.
   Defaults to `1`.
+- `DOCKVAULT_RETENTION_SCHEDULE`
+  Cron expression in `UTC` for native restic retention runs. If unset,
+  retention scheduling is disabled.
+- `DOCKVAULT_RETENTION_ARGS`
+  Arguments passed to `restic forget`. Example: `--keep-last 7 --keep-daily 14`.
+  Dockvault automatically adds `--prune` if you do not include it.
 
 If you set `dockvault.repository.password_env`, that variable must also be set
 in the Dockvault process environment.
@@ -224,6 +230,31 @@ Notes:
   `/health`.
 - The checked-in Compose example only deploys Dockvault itself. Backup jobs are
   created separately by labeling Docker volumes.
+
+## Native Retention
+
+Dockvault can schedule native restic retention runs from the server process.
+
+Behavior:
+- retention is configured globally with environment variables
+- one retention job is scheduled per unique repository path
+- repositories shared by multiple backup jobs are deduplicated
+- retention jobs share the same global concurrency limit as scheduled backups
+
+Example configuration:
+
+```bash
+export DOCKVAULT_RETENTION_SCHEDULE="30 3 * * *"
+export DOCKVAULT_RETENTION_ARGS="--keep-last 7 --keep-daily 14 --keep-weekly 8"
+```
+
+That makes Dockvault run a command equivalent to:
+
+```bash
+restic -r /repo forget --json --keep-last 7 --keep-daily 14 --keep-weekly 8 --prune
+```
+
+Retention is server-configured rather than volume-configured.
 
 ## CI And Publishing
 

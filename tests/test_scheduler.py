@@ -9,6 +9,7 @@ from dockvault.scheduler import (
     create_scheduler,
     reconcile_backups,
     run_backup_limited,
+    run_retention_limited,
 )
 
 
@@ -146,6 +147,96 @@ def test_reconcile_uses_hostname_override_when_present(monkeypatch) -> None:
 
     _, kwargs = fake_scheduler.added[0]
     assert kwargs["args"] == [jobs[0], "configured-host", semaphore]
+
+
+def test_reconcile_schedules_one_retention_job_per_unique_repository(monkeypatch) -> None:
+    fake_scheduler = _FakeScheduler()
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media-a",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-a"},
+                "repository": {"type": "local", "path": "/repo-shared"},
+            }
+        ),
+        BackupJobConfig.model_validate(
+            {
+                "name": "media-b",
+                "schedule": "30 1 * * *",
+                "source": {"type": "files", "volume_name": "media-b"},
+                "repository": {"type": "local", "path": "/repo-shared"},
+            }
+        ),
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_SCHEDULE", "15 3 * * *")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_ARGS", "--keep-last 7")
+    monkeypatch.setattr(
+        "dockvault.scheduler.CronTrigger.from_crontab",
+        lambda schedule, timezone: f"cron:{schedule}:{timezone}",
+    )
+
+    semaphore = threading.BoundedSemaphore(1)
+
+    reconcile_backups(fake_scheduler, semaphore)
+
+    retention_jobs = [
+        kwargs for args, kwargs in fake_scheduler.added if args[0].__name__ == "run_retention_limited"
+    ]
+    assert len(retention_jobs) == 1
+    assert retention_jobs[0]["trigger"] == "cron:15 3 * * *:UTC"
+    assert retention_jobs[0]["args"][1:] == ["/repo-shared", semaphore]
+
+
+def test_reconcile_removes_retention_jobs_when_retention_disabled(monkeypatch) -> None:
+    fake_scheduler = _FakeScheduler(
+        existing_ids=["reconcile-backups", "retention:deadbeef"]
+    )
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: [])
+
+    reconcile_backups(fake_scheduler, threading.BoundedSemaphore(1))
+
+    assert fake_scheduler.removed == ["retention:deadbeef"]
+
+
+def test_reconcile_logs_and_skips_retention_when_args_missing(monkeypatch, caplog) -> None:
+    fake_scheduler = _FakeScheduler()
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-volume"},
+                "repository": {"type": "local", "path": "/repo"},
+            }
+        )
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_SCHEDULE", "15 3 * * *")
+    monkeypatch.delenv("DOCKVAULT_RETENTION_ARGS", raising=False)
+    monkeypatch.setattr(
+        "dockvault.scheduler.CronTrigger.from_crontab",
+        lambda schedule, timezone: f"cron:{schedule}:{timezone}",
+    )
+
+    caplog.set_level(logging.WARNING)
+
+    reconcile_backups(fake_scheduler, threading.BoundedSemaphore(1))
+
+    assert not any(
+        args[0].__name__ == "run_retention_limited"
+        for args, kwargs in fake_scheduler.added
+    )
+    assert any("DOCKVAULT_RETENTION_ARGS is empty" in record.getMessage() for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -504,5 +595,45 @@ def test_run_backup_limited_logs_when_waiting_for_slot(monkeypatch, caplog) -> N
     assert semaphore.release_calls == 1
     assert any(
         "waiting for concurrency slot job=media" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_run_retention_limited_logs_when_waiting_for_slot(monkeypatch, caplog) -> None:
+    calls = []
+
+    class FakeSemaphore:
+        def __init__(self) -> None:
+            self.acquire_calls = []
+            self.release_calls = 0
+
+        def acquire(self, blocking=True):
+            self.acquire_calls.append(blocking)
+
+            if blocking is False:
+                return False
+
+            return True
+
+        def release(self) -> None:
+            self.release_calls += 1
+
+    semaphore = FakeSemaphore()
+    repository = SimpleNamespace(type="local", path="/repo", password_env="RESTIC_PASSWORD")
+
+    monkeypatch.setattr(
+        "dockvault.scheduler.run_retention",
+        lambda selected, repo_name=None: calls.append((selected, repo_name)),
+    )
+
+    caplog.set_level(logging.INFO)
+
+    run_retention_limited(repository, "/repo", semaphore)
+
+    assert calls == [(repository, "/repo")]
+    assert semaphore.acquire_calls == [False, True]
+    assert semaphore.release_calls == 1
+    assert any(
+        "Retention waiting for concurrency slot repo=/repo" in record.getMessage()
         for record in caplog.records
     )
