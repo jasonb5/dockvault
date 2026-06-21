@@ -204,7 +204,8 @@ def test_reconcile_does_not_raise_when_volume_listing_fails(
     reconcile_backups(fake_scheduler)
 
     assert fake_scheduler.added == []
-    assert set(fake_scheduler.removed) == {"backup:a", "backup:b"}
+    # Discovery failure must not be treated like "all backup volumes were deleted".
+    assert fake_scheduler.removed == []
     assert any(
         ("docker" in record.getMessage().lower())
         or ("volume" in record.getMessage().lower())

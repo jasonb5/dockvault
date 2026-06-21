@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 DOCKER_TIMEOUT_SECONDS = 60
 
 
+class JobDiscoveryError(RuntimeError):
+    pass
+
+
 def create_docker_client() -> DockerClient:
     client = DockerClient.from_env()
 
@@ -35,8 +39,7 @@ def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[
         raw_volumes = client.volumes.list(filters=filters)
     except APIError as e:
         logger.warning("Failed to list docker volumes %s", e)
-
-        return
+        raise JobDiscoveryError("failed to list docker volumes") from e
 
     for volume in raw_volumes:
         try:

@@ -4,7 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from dockvault.commands.backup import run_backup
-from dockvault.docker import create_docker_client, get_jobs
+from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,12 @@ def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
 
     ids: list[str] = list()
 
-    for job in get_jobs(client):
+    try:
+        jobs = list(get_jobs(client))
+    except JobDiscoveryError:
+        return
+
+    for job in jobs:
         try:
             _ = scheduler.add_job(
                 run_backup,
