@@ -1,6 +1,7 @@
 import logging
 import os
 import socket
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -9,6 +10,8 @@ from dockvault.commands.backup import run_backup
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 
 logger = logging.getLogger(__name__)
+JOB_DISCOVERY_ATTEMPTS = 3
+JOB_DISCOVERY_RETRY_DELAY_SECONDS = 1
 
 
 def _get_backup_hostname() -> str:
@@ -18,6 +21,24 @@ def _get_backup_hostname() -> str:
         return hostname
 
     return socket.gethostname()
+
+
+def _get_jobs_with_retry(client) -> list:
+    for attempt in range(1, JOB_DISCOVERY_ATTEMPTS + 1):
+        try:
+            return list(get_jobs(client))
+        except JobDiscoveryError:
+            if attempt == JOB_DISCOVERY_ATTEMPTS:
+                raise
+
+            logger.warning(
+                "Retrying docker job discovery attempt=%s/%s",
+                attempt + 1,
+                JOB_DISCOVERY_ATTEMPTS,
+            )
+            time.sleep(JOB_DISCOVERY_RETRY_DELAY_SECONDS)
+
+    return []
 
 
 def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
@@ -31,7 +52,7 @@ def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
     ids: list[str] = list()
 
     try:
-        jobs = list(get_jobs(client))
+        jobs = _get_jobs_with_retry(client)
     except JobDiscoveryError:
         return
 

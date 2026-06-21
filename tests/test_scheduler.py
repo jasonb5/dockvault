@@ -242,6 +242,74 @@ def test_reconcile_does_not_raise_when_volume_listing_fails(
     )
 
 
+def test_reconcile_retries_job_discovery_before_succeeding(monkeypatch) -> None:
+    fake_scheduler = _FakeScheduler()
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-volume"},
+                "repository": {"type": "local", "path": "/repo"},
+            }
+        )
+    ]
+    attempts = {"count": 0}
+    sleeps: list[int] = []
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
+    monkeypatch.setattr(
+        "dockvault.scheduler.CronTrigger.from_crontab",
+        lambda schedule, timezone: f"cron:{schedule}:{timezone}",
+    )
+    monkeypatch.setattr("dockvault.scheduler.time.sleep", sleeps.append)
+
+    def _get_jobs(client):
+        attempts["count"] += 1
+
+        if attempts["count"] < 3:
+            from dockvault.docker import JobDiscoveryError
+
+            raise JobDiscoveryError("failed")
+
+        return jobs
+
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", _get_jobs)
+
+    reconcile_backups(fake_scheduler)
+
+    assert attempts["count"] == 3
+    assert sleeps == [1, 1]
+    assert len(fake_scheduler.added) == 1
+
+
+def test_reconcile_preserves_jobs_when_job_discovery_retries_are_exhausted(
+    monkeypatch, caplog
+) -> None:
+    from dockvault.docker import JobDiscoveryError
+
+    fake_scheduler = _FakeScheduler(
+        existing_ids=["reconcile-backups", "backup:a", "backup:b"]
+    )
+    sleeps: list[int] = []
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr(
+        "dockvault.scheduler.get_jobs",
+        lambda client: (_ for _ in ()).throw(JobDiscoveryError("failed")),
+    )
+    monkeypatch.setattr("dockvault.scheduler.time.sleep", sleeps.append)
+
+    caplog.set_level(logging.WARNING)
+    reconcile_backups(fake_scheduler)
+
+    assert fake_scheduler.added == []
+    assert fake_scheduler.removed == []
+    assert sleeps == [1, 1]
+    assert any("retrying docker job discovery" in record.getMessage().lower() for record in caplog.records)
+
+
 def test_reconcile_continues_when_add_job_fails_for_one_job(
     monkeypatch, caplog
 ) -> None:
