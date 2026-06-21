@@ -39,6 +39,34 @@ def test_backup_create_runs_matching_jobs(monkeypatch) -> None:
     assert captured == {"job": job, "hostname": "charon"}
 
 
+def test_backup_restore_runs_matching_jobs(monkeypatch) -> None:
+    job = object()
+    captured = {}
+
+    monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [job])
+    monkeypatch.setattr(
+        backup_module,
+        "run_restore",
+        lambda selected, snapshot, target_volume=None: captured.update(
+            {
+                "job": selected,
+                "snapshot": snapshot,
+                "target_volume": target_volume,
+            }
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["backup", "restore", "alpha", "latest", "restore-volume"])
+
+    assert result.exit_code == 0
+    assert captured == {
+        "job": job,
+        "snapshot": "latest",
+        "target_volume": "restore-volume",
+    }
+
+
 def test_server_command_configures_uvicorn(monkeypatch) -> None:
     captured = {}
 

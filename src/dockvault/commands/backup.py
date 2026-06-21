@@ -47,6 +47,24 @@ def create(name: str, hostname: Annotated[str | None, typer.Argument()] = None):
         run_backup(job, hostname)
 
 
+@app.command()
+def restore(
+    name: str,
+    snapshot: str,
+    target_volume: Annotated[str | None, typer.Argument()] = None,
+):
+    client = _create_docker_client()
+
+    labels = [
+        f"dockvault.name={name}",
+    ]
+
+    jobs = get_jobs(client, labels)
+
+    for job in jobs:
+        run_restore(job, snapshot, target_volume)
+
+
 def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
     client = _create_docker_client()
 
@@ -77,6 +95,43 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
                 logger.error("Backup produced no result %s", context)
             else:
                 report_result(job, context, result)
+
+
+def run_restore(
+    job: BackupJobConfig,
+    snapshot: str,
+    target_volume: str | None = None,
+) -> None:
+    client = _create_docker_client()
+
+    source = create_source_handler(job.source)
+    repository = create_repository_handler(job.repository, client)
+    restore_target = target_volume or job.source.volume_name
+    context = _restore_context(job, repository.get_repo_path(), snapshot, restore_target)
+
+    volumes = source.get_restore_volumes(target_volume)
+    logger.info("Starting restore %s", context)
+
+    result: ExecResult | None = None
+    cmd = _with_timeout(source.build_restore_command(repository.get_repo_path(), snapshot))
+
+    with repository.launch(volumes, ["-c", cmd]) as container:
+        try:
+            status = cast(dict[str, int], container.wait())
+            result = cast(
+                ExecResult,
+                SimpleNamespace(
+                    output=container.logs(stdout=True, stderr=True),
+                    exit_code=status["StatusCode"],
+                ),
+            )
+        except Exception as e:
+            logger.error("Restore failed %s error=%s", context, e)
+        finally:
+            if result is None:
+                logger.error("Restore produced no result %s", context)
+            else:
+                report_restore_result(context, result)
 
 
 def report_result(job: BackupJobConfig, context: str, result: ExecResult) -> None:
@@ -119,6 +174,18 @@ def _job_context(job: BackupJobConfig, repository_path: str) -> str:
     )
 
 
+def _restore_context(
+    job: BackupJobConfig,
+    repository_path: str,
+    snapshot: str,
+    target_volume: str,
+) -> str:
+    return (
+        f"job={job.name} snapshot={snapshot} target_volume={target_volume} "
+        f"repo={repository_path}"
+    )
+
+
 def _with_timeout(command: str) -> str:
     return f"timeout {RESTIC_TIMEOUT_SECONDS}s {command}"
 
@@ -127,6 +194,35 @@ def _create_docker_client() -> DockerClient:
     from dockvault.docker import create_docker_client
 
     return create_docker_client()
+
+
+def report_restore_result(context: str, result: ExecResult) -> None:
+    lines = _decode_output_lines(result)
+
+    match result.exit_code:
+        case 0:
+            logger.info("Restore completed %s", context)
+        case code:
+            message = _last_output_line(lines)
+
+            if message:
+                logger.warning("Restore failed %s exit_code=%s error=%s", context, code, message)
+            else:
+                logger.warning("Restore failed %s exit_code=%s", context, code)
+
+
+def _decode_output_lines(result: ExecResult) -> list[str]:
+    return cast(bytes, result.output or b"").decode("utf-8", errors="replace").splitlines()
+
+
+def _last_output_line(lines: list[str]) -> str | None:
+    for line in reversed(lines):
+        stripped = line.strip()
+
+        if stripped:
+            return stripped
+
+    return None
 
 
 def parser_restic_summary(lines: list[str]) -> ResticSummary | None:

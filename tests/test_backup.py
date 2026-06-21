@@ -34,6 +34,16 @@ def test_files_backup_handler_builds_expected_command_and_mounts() -> None:
         handler.build_backup_command("/repo", hostname="charon")
         == "restic -r /repo backup --host charon --tag media-volume --json /data"
     )
+    assert handler.get_restore_volumes() == {
+        "media-volume": {"bind": "/restore", "mode": "rw"},
+    }
+    assert handler.get_restore_volumes("restore-volume") == {
+        "restore-volume": {"bind": "/restore", "mode": "rw"},
+    }
+    assert (
+        handler.build_restore_command("/repo", "latest")
+        == "restic -r /repo restore latest --target /restore"
+    )
 
 
 def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
@@ -201,6 +211,101 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
     assert failure_records, (
         f"'Backup failed' must be logged at WARNING+, got:\n{caplog.text}"
     )
+
+
+def test_run_restore_logs_completion_and_uses_target_volume(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    seen = {}
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 0},
+        logs=lambda stdout, stderr: b"restored successfully\n",
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            seen.update({"volumes": volumes, "command": command, "hostname": hostname})
+
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    source = SimpleNamespace(
+        get_restore_volumes=lambda target=None: {target or "media-volume": {"bind": "/restore", "mode": "rw"}},
+        build_restore_command=lambda repository, snapshot: f"restore {snapshot} to {repository}",
+    )
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("INFO")
+
+    backup.run_restore(job, "latest", "restore-volume")
+
+    assert "Starting restore job=media snapshot=latest target_volume=restore-volume repo=/repo" in caplog.text
+    assert "Restore completed job=media snapshot=latest target_volume=restore-volume repo=/repo" in caplog.text
+    assert seen["volumes"] == {"restore-volume": {"bind": "/restore", "mode": "rw"}}
+    assert seen["command"] == ["-c", "timeout 21600s restore latest to /repo"]
+    assert seen["hostname"] is None
+
+
+def test_run_restore_logs_failure_with_last_output_line(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 3},
+        logs=lambda stdout, stderr: b"first line\nFatal: restore failed\n",
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    source = SimpleNamespace(
+        get_restore_volumes=lambda target=None: {"media-volume": {"bind": "/restore", "mode": "rw"}},
+        build_restore_command=lambda repository, snapshot: f"restore {snapshot} to {repository}",
+    )
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("WARNING")
+
+    backup.run_restore(job, "abc123")
+
+    assert "Restore failed job=media snapshot=abc123 target_volume=media-volume repo=/repo exit_code=3 error=Fatal: restore failed" in caplog.text
 
 
 # ---------------------------------------------------------------------------
