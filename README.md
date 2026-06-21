@@ -111,12 +111,17 @@ uv run dockvault server
 uv run dockvault backup list-jobs
 uv run dockvault backup create media-nightly
 uv run dockvault backup create media-nightly custom-hostname
+uv run dockvault backup restore media-nightly latest
+uv run dockvault backup restore media-nightly latest restore-target
 ```
 
 Command behavior:
 - `dockvault server` starts the API and scheduler on `0.0.0.0:8000`
 - `dockvault backup list-jobs` prints discovered job names
 - `dockvault backup create <name> [hostname]` runs matching jobs immediately
+- `dockvault backup restore <name> <snapshot> [target-volume]` restores a
+  snapshot into the job's source volume by default, or into an override volume
+  when `target-volume` is provided
 
 ## API
 
@@ -256,6 +261,121 @@ restic -r /repo forget --json --keep-last 7 --keep-daily 14 --keep-weekly 8 --pr
 
 Retention is server-configured rather than volume-configured.
 
+## Failure Behavior
+
+Dockvault is designed to keep running when individual backups, retention runs,
+or Docker discovery operations fail.
+
+Current behavior:
+- Docker unavailable during reconcile:
+  the reconcile loop logs a warning and leaves existing scheduled jobs in place.
+- Job discovery failure:
+  Dockvault retries discovery up to `3` times with a `1` second delay, then
+  logs the failure path and preserves existing scheduled jobs.
+- Invalid volume labels or invalid cron on one job:
+  that job is skipped and other jobs continue to be scheduled.
+- Backup failure:
+  the failing backup logs an error or warning with job context and does not stop
+  the scheduler or other jobs.
+- Retention failure:
+  the failing retention run logs an error or warning with repository context and
+  does not stop the scheduler or other jobs.
+- Missing `dockvault.repository.password_env` variable:
+  the affected backup or retention run fails when its transient restic container
+  is being prepared; other jobs are unaffected.
+- Retention misconfiguration:
+  if `DOCKVAULT_RETENTION_SCHEDULE` is set but `DOCKVAULT_RETENTION_ARGS` is
+  empty, Dockvault logs a warning and skips retention scheduling.
+- Readiness endpoint:
+  `/ready` returns `503` when the scheduler is unavailable/stopped, Docker is
+  unavailable, or job discovery fails.
+
+Operationally, this means Dockvault prefers partial progress over global
+failure: one bad job should not take down the server or unschedule unrelated
+work.
+
+## Observability
+
+Important runtime logs include:
+- scheduler configuration at startup
+- reconcile summaries showing discovered, scheduled, failed, and removed jobs
+- backup start/completion/failure messages with job and repository context
+- retention start/completion/failure messages with repository context
+- concurrency wait messages when backups or retention runs are blocked by the
+  global concurrency limit
+
+## Docker Security
+
+Dockvault currently requires access to the Docker socket:
+
+```text
+/var/run/docker.sock
+```
+
+That gives the process broad control over the local Docker daemon. In practice,
+Dockvault can:
+- list Docker volumes and read their labels
+- create transient `restic/restic` containers
+- mount host paths and Docker volumes into those containers
+- start and remove those transient containers
+
+Operationally, you should treat Dockvault as a privileged infrastructure
+service, not as an untrusted application workload.
+
+Recommendations:
+- deploy Dockvault only on hosts where Docker-level control is acceptable
+- do not expose the Docker socket mount to unrelated containers
+- keep the host limited to trusted operators and workloads
+- prefer a dedicated backup host or a clearly trusted single-tenant Docker
+  environment
+- review which host paths are mounted into Dockvault, since those same paths can
+  then be mounted into transient restic containers
+
+Current limitation:
+- Dockvault does not support a reduced-permission discovery mode; Docker socket
+  access is required for job discovery and for launching backup and retention
+  containers
+
+## Secret Handling
+
+Dockvault currently passes restic credentials to transient backup and retention
+containers through environment variables.
+
+Default behavior:
+- each repository uses `RESTIC_PASSWORD` unless overridden with
+  `dockvault.repository.password_env`
+- the configured password variable must exist in the Dockvault server process
+  environment
+- Dockvault forwards that variable into the transient `restic` container it
+  launches for the job
+
+Operational recommendations:
+- inject secrets at deploy time instead of hardcoding them in Compose files
+- use your runtime's secret injection mechanism if available
+- avoid committing real password values into git
+- use different password variables only when you intentionally need separate
+  repository credentials
+- treat access to the Dockvault container environment as secret access
+
+Example with an environment file:
+
+```bash
+cat > .env <<'EOF'
+RESTIC_PASSWORD=replace-me
+EOF
+
+docker compose --env-file .env -f compose.example.yaml up -d
+```
+
+If you use a custom repository password variable label such as:
+
+```text
+dockvault.repository.password_env=MEDIA_RESTIC_PASSWORD
+```
+
+then `MEDIA_RESTIC_PASSWORD` must be present in the Dockvault server
+environment before that job can run.
+
 ## CI And Publishing
 
 GitHub Actions workflows are included for:
@@ -273,6 +393,9 @@ Workflow behavior:
 - Pull requests build the image but do not push it.
 - Pushes to `main` publish branch and sha tags.
 - Pushes of Git tags matching `v*` publish versioned image tags.
+
+Release procedure:
+- see `RELEASING.md`
 
 Examples:
 - Git ref `main` publishes branch and sha tags.
