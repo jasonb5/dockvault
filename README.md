@@ -75,6 +75,9 @@ Optional:
 - `DOCKVAULT_HOSTNAME`
   Hostname to attach to backups. If unset, Dockvault uses the current host
   name.
+- `DOCKVAULT_MAX_CONCURRENT_BACKUPS`
+  Global limit for concurrently running scheduled backups across all jobs.
+  Defaults to `1`.
 
 If you set `dockvault.repository.password_env`, that variable must also be set
 in the Dockvault process environment.

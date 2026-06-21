@@ -9,6 +9,7 @@ services:
     environment:
       RESTIC_PASSWORD: change-me
       DOCKVAULT_HOSTNAME: dockvault
+      DOCKVAULT_MAX_CONCURRENT_BACKUPS: "1"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /srv/restic:/srv/restic
