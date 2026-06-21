@@ -10,6 +10,7 @@ LOGGING_CONFIG = {
             "format": "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
         },
         "access": {
+            "()": "uvicorn.logging.AccessFormatter",
             "format": '%(asctime)s %(levelname)-8s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s',
         },
     },

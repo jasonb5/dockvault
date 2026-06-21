@@ -4,6 +4,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import Protocol
 
 from docker import DockerClient
+from docker.errors import ImageNotFound
 from docker.models.containers import Container
 
 from dockvault.models.repository import BackupRepository
@@ -54,6 +55,7 @@ class BaseContainerRepositoryHandler:
         hostname: str | None,
     ) -> Container:
         volumes.update(self.build_volumes())
+        self._ensure_image()
 
         container = self.client.containers.create(
             RESTIC_IMAGE,
@@ -81,3 +83,9 @@ class BaseContainerRepositoryHandler:
 
     def get_repo_path(self) -> str:
         return ""
+
+    def _ensure_image(self) -> None:
+        try:
+            self.client.images.get(RESTIC_IMAGE)
+        except ImageNotFound:
+            self.client.images.pull(RESTIC_IMAGE)

@@ -156,10 +156,49 @@ docker build -t dockvault:test .
 The repository contains a production Dockerfile for the `dockvault server`
 process.
 
+An example Compose deployment is included at `compose.example.yaml`.
+
+## Deployment Requirements
+
+Dockvault assumes the following at runtime:
+
+1. Docker API access is available inside the Dockvault process.
+2. The process can read Docker volumes and create short-lived backup
+   containers.
+3. Every local restic repository path referenced by job labels exists inside
+   the Dockvault container at the same absolute path used in the label.
+4. The restic password environment variable required by each job is present in
+   the Dockvault process environment.
+5. Port `8000` is reachable if you want health or readiness probing.
+
+Required runtime inputs:
+
+- Docker socket mount: `/var/run/docker.sock:/var/run/docker.sock`
+- Repository path mounts for every `dockvault.repository.path` in use
+- `RESTIC_PASSWORD`, or whichever variable name is configured through
+  `dockvault.repository.password_env`
+
+Optional runtime inputs:
+
+- `DOCKVAULT_HOSTNAME` to override the host name recorded in restic snapshots
+
+Operational assumptions:
+
+- schedules are interpreted in `UTC`
+- Dockvault reconciles Docker jobs every `60` seconds
+- backup jobs run in transient `restic/restic:0.19.0` containers
+- the service must be allowed to create and remove those transient containers
+
 Build locally:
 
 ```bash
 docker build -t dockvault:test .
+```
+
+Run the example deployment:
+
+```bash
+docker compose -f compose.example.yaml up -d --build
 ```
 
 Run locally:
@@ -180,6 +219,8 @@ Notes:
   mounted into the Dockvault container at the same absolute path.
 - The image exposes port `8000` and includes a Docker `HEALTHCHECK` against
   `/health`.
+- The checked-in Compose example only deploys Dockvault itself. Backup jobs are
+  created separately by labeling Docker volumes.
 
 ## CI And Publishing
 
