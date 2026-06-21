@@ -8,9 +8,16 @@ from docker.models.containers import Container
 
 from dockvault.models.repository import BackupRepository
 
+RESTIC_IMAGE = "restic/restic:0.19.0"
+
 
 class BackupRepositoryHandler(Protocol):
-    def launch(self, volumes: dict[str, dict[str, str]]) -> AbstractContextManager[Container]: ...
+    def launch(
+        self,
+        volumes: dict[str, dict[str, str]],
+        command: list[str],
+        hostname: str | None = None,
+    ) -> AbstractContextManager[Container]: ...
     def get_repo_path(self) -> str: ...
 
 
@@ -23,11 +30,16 @@ class BaseContainerRepositoryHandler:
         self.client = client
 
     @contextmanager
-    def launch(self, volumes: dict[str, dict[str, str]] | None) -> Generator[Container]:
+    def launch(
+        self,
+        volumes: dict[str, dict[str, str]] | None,
+        command: list[str],
+        hostname: str | None = None,
+    ) -> Generator[Container]:
         if volumes is None:
             volumes = {}
 
-        container = self._create(volumes)
+        container = self._create(volumes, command, hostname)
 
         try:
             container.start()
@@ -35,13 +47,20 @@ class BaseContainerRepositoryHandler:
         finally:
             container.remove(force=True)
 
-    def _create(self, volumes: dict[str, dict[str, str]]) -> Container:
+    def _create(
+        self,
+        volumes: dict[str, dict[str, str]],
+        command: list[str],
+        hostname: str | None,
+    ) -> Container:
         volumes.update(self.build_volumes())
 
         container = self.client.containers.create(
-            "ghcr.io/jasonb5/dockvault-restic:latest",
-            "/bin/sleep infinity",
+            RESTIC_IMAGE,
+            command,
             environment=self.get_environment(),
+            entrypoint=["/bin/sh"],
+            hostname=hostname,
             volumes=volumes,
         )
 

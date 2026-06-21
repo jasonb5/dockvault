@@ -53,15 +53,15 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
         total_duration=1.5,
     )
     container = SimpleNamespace(
-        exec_run=lambda cmd: SimpleNamespace(
-            output=summary.model_dump_json().encode("utf-8"),
-            exit_code=0,
-        )
+        wait=lambda: {"StatusCode": 0},
+        logs=lambda stdout, stderr: summary.model_dump_json().encode("utf-8"),
     )
 
     class FakeRepository:
-        def launch(self, volumes):
+        def launch(self, volumes, command, hostname=None):
             self.volumes = volumes
+            self.command = command
+            self.hostname = hostname
 
             class Context:
                 def __enter__(self_inner):
@@ -79,10 +79,11 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
         get_volumes=lambda: {"media-volume": {"bind": "/data", "mode": "ro"}},
         build_backup_command=lambda repository, hostname: f"backup to {repository} host={hostname}",
     )
+    repo = FakeRepository()
 
     monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
-    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: repo)
 
     caplog.set_level("INFO")
 
@@ -94,6 +95,8 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
     assert "Backup completed" in caplog.text
     assert "snapshot=abc123" in caplog.text
     assert "added=2.0 KiB" in caplog.text
+    assert repo.command == ["-c", "timeout 21600s backup to /repo host=charon"]
+    assert repo.hostname == "charon"
 
 
 def test_run_backup_wraps_restic_command_with_timeout(monkeypatch, caplog) -> None:
@@ -107,14 +110,14 @@ def test_run_backup_wraps_restic_command_with_timeout(monkeypatch, caplog) -> No
     )
     seen = {}
     container = SimpleNamespace(
-        exec_run=lambda cmd: seen.update({"cmd": cmd}) or SimpleNamespace(
-            output=_summary_bytes(),
-            exit_code=0,
-        )
+        wait=lambda: {"StatusCode": 0},
+        logs=lambda stdout, stderr: _summary_bytes(),
     )
 
     class FakeRepository:
-        def launch(self, volumes):
+        def launch(self, volumes, command, hostname=None):
+            seen.update({"cmd": command})
+
             class Context:
                 def __enter__(self_inner):
                     return container
@@ -140,8 +143,7 @@ def test_run_backup_wraps_restic_command_with_timeout(monkeypatch, caplog) -> No
 
     backup.run_backup(job)
 
-    assert seen["cmd"].startswith("timeout ")
-    assert "restic backup --json /data" in seen["cmd"]
+    assert seen["cmd"] == ["-c", "timeout 21600s restic backup --json /data"]
 
 
 def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
@@ -155,14 +157,12 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
     )
     error = ResticExitError(message_type="exit_error", code=1, message="repository does not exist")
     container = SimpleNamespace(
-        exec_run=lambda cmd: SimpleNamespace(
-            output=error.model_dump_json().encode("utf-8"),
-            exit_code=1,
-        )
+        wait=lambda: {"StatusCode": 1},
+        logs=lambda stdout, stderr: error.model_dump_json().encode("utf-8"),
     )
 
     class FakeRepository:
-        def launch(self, volumes):
+        def launch(self, volumes, command, hostname=None):
             class Context:
                 def __enter__(self_inner):
                     return container
@@ -233,8 +233,10 @@ class _FakeRepository:
         self.entered = False
         self.exited = False
 
-    def launch(self, volumes):
+    def launch(self, volumes, command, hostname=None):
         outer = self
+        outer.command = command
+        outer.hostname = hostname
 
         class _Context:
             def __enter__(self_inner):
@@ -257,7 +259,8 @@ def _install_run_backup_env(monkeypatch, *, output: bytes | None, exit_code: int
     Returns the fake repository so tests can assert on lifecycle state.
     """
     container = SimpleNamespace(
-        exec_run=lambda cmd: SimpleNamespace(output=output, exit_code=exit_code),
+        wait=lambda: {"StatusCode": exit_code},
+        logs=lambda stdout, stderr: output,
     )
     repo = _FakeRepository(container)
     source = SimpleNamespace(

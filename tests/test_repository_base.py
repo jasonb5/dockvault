@@ -36,8 +36,8 @@ def test_launch_merges_volumes_and_removes_container(monkeypatch) -> None:
         def __init__(self) -> None:
             self.containers = self
 
-        def create(self, image, command, environment, volumes):
-            events.append((image, command, environment, volumes))
+        def create(self, image, command, environment, entrypoint, hostname, volumes):
+            events.append((image, command, environment, entrypoint, hostname, volumes))
             return FakeContainer()
 
     class CustomHandler(BaseContainerRepositoryHandler):
@@ -47,8 +47,12 @@ def test_launch_merges_volumes_and_removes_container(monkeypatch) -> None:
     monkeypatch.setenv("RESTIC_PASSWORD", "secret")
     handler = CustomHandler(LocalRepository(type="local", path="/repo"), FakeClient())
 
-    with handler.launch({"/data": {"bind": "/data", "mode": "ro"}}):
-        assert events[0][3] == {
+    with handler.launch({"/data": {"bind": "/data", "mode": "ro"}}, ["-c", "restic backup"], "backup-host"):
+        assert events[0][0] == "restic/restic:0.19.0"
+        assert events[0][1] == ["-c", "restic backup"]
+        assert events[0][3] == ["/bin/sh"]
+        assert events[0][4] == "backup-host"
+        assert events[0][5] == {
             "/data": {"bind": "/data", "mode": "ro"},
             "/repo": {"bind": "/repo", "mode": "rw"},
         }

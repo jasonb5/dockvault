@@ -1,5 +1,0 @@
-FROM alpine
-
-RUN apk add restic
-
-ENTRYPOINT ["/bin/sleep", "infinity"]

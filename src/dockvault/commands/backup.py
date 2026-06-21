@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 from typing import Annotated, cast
 
 import typer
@@ -57,12 +58,18 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
     logger.info("Starting backup %s", context)
 
     result: ExecResult | None = None
+    cmd = _with_timeout(source.build_backup_command(repository.get_repo_path(), hostname))
 
-    with repository.launch(volumes) as container:
+    with repository.launch(volumes, ["-c", cmd], hostname) as container:
         try:
-            cmd = _with_timeout(source.build_backup_command(repository.get_repo_path(), hostname))
-
-            result = container.exec_run(cmd)
+            status = cast(dict[str, int], container.wait())
+            result = cast(
+                ExecResult,
+                SimpleNamespace(
+                    output=container.logs(stdout=True, stderr=True),
+                    exit_code=status["StatusCode"],
+                ),
+            )
         except Exception as e:
             logger.error("Backup failed %s error=%s", context, e)
         finally:
