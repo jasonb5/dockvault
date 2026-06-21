@@ -1,3 +1,5 @@
+from importlib.metadata import version as package_version
+
 import typer
 import uvicorn
 
@@ -9,7 +11,7 @@ app = typer.Typer(help="dockvault")
 
 @app.command()
 def version() -> None:
-    print("0.1.0")
+    print(package_version("dockvault"))
 
 
 app.add_typer(backup_app, name="backup")

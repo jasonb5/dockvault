@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatch-vcs>=0.4", "hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
 name = "dockvault"
-version = "0.1.0"
+dynamic = ["version"]
 description = "dockvault"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -32,6 +32,12 @@ dockvault = "dockvault:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dockvault"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/dockvault/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
