@@ -89,6 +89,7 @@ def test_reconcile_backups_schedules_each_job(monkeypatch) -> None:
 
     monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
     monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
     monkeypatch.setattr(
         "dockvault.scheduler.CronTrigger.from_crontab",
         lambda schedule, timezone: f"cron:{schedule}:{timezone}",
@@ -101,12 +102,40 @@ def test_reconcile_backups_schedules_each_job(monkeypatch) -> None:
     assert args[0].__name__ == "run_backup"
     assert kwargs == {
         "trigger": "cron:0 1 * * *:UTC",
-        "args": [jobs[0], "charon"],
+        "args": [jobs[0], "detected-host"],
         "id": "backup:media",
         "max_instances": 1,
         "replace_existing": True,
         "coalesce": True,
     }
+
+
+def test_reconcile_uses_hostname_override_when_present(monkeypatch) -> None:
+    fake_scheduler = _FakeScheduler()
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-volume"},
+                "repository": {"type": "local", "path": "/repo"},
+            }
+        )
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setenv("DOCKVAULT_HOSTNAME", "configured-host")
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
+    monkeypatch.setattr(
+        "dockvault.scheduler.CronTrigger.from_crontab",
+        lambda schedule, timezone: f"cron:{schedule}:{timezone}",
+    )
+
+    reconcile_backups(fake_scheduler)
+
+    _, kwargs = fake_scheduler.added[0]
+    assert kwargs["args"] == [jobs[0], "configured-host"]
 
 
 # ---------------------------------------------------------------------------

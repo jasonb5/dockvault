@@ -1,4 +1,6 @@
 import logging
+import os
+import socket
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -7,6 +9,15 @@ from dockvault.commands.backup import run_backup
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 
 logger = logging.getLogger(__name__)
+
+
+def _get_backup_hostname() -> str:
+    hostname = os.getenv("DOCKVAULT_HOSTNAME")
+
+    if hostname:
+        return hostname
+
+    return socket.gethostname()
 
 
 def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
@@ -24,12 +35,14 @@ def reconcile_backups(scheduler: AsyncIOScheduler) -> None:
     except JobDiscoveryError:
         return
 
+    hostname = _get_backup_hostname()
+
     for job in jobs:
         try:
             _ = scheduler.add_job(
                 run_backup,
                 trigger=CronTrigger.from_crontab(job.schedule, timezone="UTC"),
-                args=[job, "charon"],  # TODO: auto detect hostname, allow user to override
+                args=[job, hostname],
                 id=f"backup:{job.name}",
                 max_instances=1,
                 replace_existing=True,
