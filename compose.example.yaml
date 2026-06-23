@@ -14,7 +14,7 @@ services:
       DOCKVAULT_RETENTION_ARGS: "--keep-last 7 --keep-daily 14 --keep-weekly 8"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /srv/restic:/srv/restic
+      - ${DOCKVAULT_REPOSITORY_ROOT:-/srv/restic}:${DOCKVAULT_REPOSITORY_ROOT:-/srv/restic}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 30s

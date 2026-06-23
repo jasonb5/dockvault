@@ -170,7 +170,9 @@ docker build -t dockvault:test .
 The repository contains a production Dockerfile for the `dockvault server`
 process.
 
-An example Compose deployment is included at `compose.example.yaml`.
+The checked-in Compose template is `compose.example.yaml`.
+Create a local `compose.yaml` only when you want Docker Compose defaults or
+host-specific overrides that should stay out of git.
 
 ## Deployment Requirements
 
@@ -192,6 +194,13 @@ Required runtime inputs:
 - `RESTIC_PASSWORD`, or whichever variable name is configured through
   `dockvault.repository.password_env`
 
+When using the checked-in Compose template, set
+`DOCKVAULT_REPOSITORY_ROOT` in `.env` so the host bind mount and the in-container
+repository path stay identical. For example, if job labels use
+`dockvault.repository.path=/backup/restic/media`, then
+`DOCKVAULT_REPOSITORY_ROOT=/backup/restic` and the compose bind mount will become
+`/backup/restic:/backup/restic`.
+
 Optional runtime inputs:
 
 - `DOCKVAULT_HOSTNAME` to override the host name recorded in restic snapshots
@@ -209,10 +218,11 @@ Build locally:
 docker build -t dockvault:test .
 ```
 
-Run the example deployment:
+Run the checked-in Compose template:
 
 ```bash
-docker compose -f compose.example.yaml up -d --build
+cp .env.example .env
+docker compose --env-file .env -f compose.example.yaml up -d --build
 ```
 
 Run locally:
@@ -360,12 +370,13 @@ Operational recommendations:
 Example with an environment file:
 
 ```bash
-cat > .env <<'EOF'
-RESTIC_PASSWORD=replace-me
-EOF
-
+cp .env.example .env
 docker compose --env-file .env -f compose.example.yaml up -d
 ```
+
+If you prefer Docker Compose's default file discovery, keep the checked-in
+template unchanged and put your machine-specific deployment in a local
+`compose.yaml`.
 
 If you use a custom repository password variable label such as:
 
