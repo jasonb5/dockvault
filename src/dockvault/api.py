@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from dockvault.commands.backup import list_snapshots_for_job
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 from dockvault.models.job import BackupJobConfig
 from dockvault.scheduler import create_scheduler
@@ -63,6 +64,14 @@ def _discover_jobs() -> list[BackupJobConfig]:
         raise HTTPException(status_code=503, detail="job_discovery_failed") from exc
 
 
+def _get_job_by_name(name: str) -> BackupJobConfig:
+    for job in _discover_jobs():
+        if job.name == name:
+            return job
+
+    raise HTTPException(status_code=404, detail="job_not_found")
+
+
 def _readiness_payload(app: FastAPI) -> tuple[dict[str, str], int]:
     scheduler = getattr(app.state, "scheduler", None)
 
@@ -106,10 +115,18 @@ def list_jobs(request: Request) -> dict[str, list[dict]]:
 
 @app.get("/jobs/{name}")
 def get_job(name: str, request: Request) -> dict:
-    jobs = _discover_jobs()
+    job = _get_job_by_name(name)
 
-    for job in jobs:
-        if job.name == name:
-            return _job_payload(request.app, job)
+    return _job_payload(request.app, job)
 
-    raise HTTPException(status_code=404, detail="job_not_found")
+
+@app.get("/jobs/{name}/snapshots")
+def get_job_snapshots(name: str) -> dict[str, list[dict]]:
+    job = _get_job_by_name(name)
+
+    try:
+        snapshots = list_snapshots_for_job(job)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail="snapshot_lookup_failed") from exc
+
+    return {"snapshots": snapshots}

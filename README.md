@@ -135,6 +135,9 @@ Endpoints:
   scheduled run time when the job is currently present in the scheduler.
 - `GET /jobs/{name}`
   Returns one discovered backup job by name.
+- `GET /jobs/{name}/snapshots`
+  Returns snapshots from the job's restic repository filtered by the job's
+  source volume tag.
 
 `/ready` failure reasons currently include:
 - `scheduler_unavailable`
@@ -150,6 +153,7 @@ curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/ready
 curl http://127.0.0.1:8000/jobs
 curl http://127.0.0.1:8000/jobs/media-nightly
+curl http://127.0.0.1:8000/jobs/media-nightly/snapshots
 ```
 
 ## Local Development

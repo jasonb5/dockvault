@@ -4,7 +4,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from dockvault.api import _readiness_payload, get_job, health, list_jobs
+from dockvault.api import (
+    _readiness_payload,
+    get_job,
+    get_job_snapshots,
+    health,
+    list_jobs,
+)
 from dockvault.models.job import BackupJobConfig
 
 
@@ -184,3 +190,50 @@ def test_list_jobs_returns_503_when_docker_is_unavailable(monkeypatch) -> None:
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.detail == "docker_unavailable"
+
+
+def test_get_job_snapshots_returns_snapshot_list(monkeypatch) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "alpha",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "alpha-volume"},
+            "repository": {"type": "local", "path": "/repo-alpha"},
+        }
+    )
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
+    monkeypatch.setattr(
+        "dockvault.api.list_snapshots_for_job",
+        lambda selected: [{"id": "abc123", "time": "2026-06-27T01:00:00Z"}],
+    )
+
+    assert get_job_snapshots("alpha") == {
+        "snapshots": [{"id": "abc123", "time": "2026-06-27T01:00:00Z"}]
+    }
+
+
+def test_get_job_snapshots_returns_502_when_snapshot_lookup_fails(monkeypatch) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "alpha",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "alpha-volume"},
+            "repository": {"type": "local", "path": "/repo-alpha"},
+        }
+    )
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
+
+    def _raise(selected):
+        raise RuntimeError("restic failed")
+
+    monkeypatch.setattr("dockvault.api.list_snapshots_for_job", _raise)
+
+    with pytest.raises(HTTPException, match="502") as excinfo:
+        get_job_snapshots("alpha")
+
+    assert excinfo.value.status_code == 502
+    assert excinfo.value.detail == "snapshot_lookup_failed"

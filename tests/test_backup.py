@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import logging
+import pytest
 
 from dockvault.commands import backup
 from dockvault.models.job import BackupJobConfig
@@ -306,6 +307,94 @@ def test_run_restore_logs_failure_with_last_output_line(monkeypatch, caplog) -> 
     backup.run_restore(job, "abc123")
 
     assert "Restore failed job=media snapshot=abc123 target_volume=media-volume repo=/repo exit_code=3 error=Fatal: restore failed" in caplog.text
+
+
+def test_list_snapshots_for_job_runs_tagged_restic_snapshots(monkeypatch) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    seen = {}
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 0},
+        logs=lambda stdout, stderr: b'[{"id":"old","time":"2026-06-26T01:00:00Z"},{"id":"new","time":"2026-06-27T01:00:00Z"}]',
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            seen.update({"volumes": volumes, "command": command, "hostname": hostname})
+
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    snapshots = backup.list_snapshots_for_job(job)
+
+    assert snapshots == [
+        {"id": "new", "time": "2026-06-27T01:00:00Z"},
+        {"id": "old", "time": "2026-06-26T01:00:00Z"},
+    ]
+    assert seen["volumes"] is None
+    assert seen["hostname"] is None
+    assert seen["command"] == [
+        "-c",
+        "timeout 21600s restic -r /repo snapshots --json --tag media-volume",
+    ]
+
+
+def test_list_snapshots_for_job_raises_on_restic_failure(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    error = ResticExitError(message_type="exit_error", code=1, message="repository is locked")
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 1},
+        logs=lambda stdout, stderr: error.model_dump_json().encode("utf-8"),
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("WARNING")
+
+    with pytest.raises(RuntimeError, match="repository is locked"):
+        backup.list_snapshots_for_job(job)
+
+    assert "Snapshot lookup failed" in caplog.text
 
 
 # ---------------------------------------------------------------------------

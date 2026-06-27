@@ -1,4 +1,6 @@
+import json
 import logging
+import shlex
 from types import SimpleNamespace
 from typing import Annotated, cast
 
@@ -134,6 +136,53 @@ def run_restore(
                 report_restore_result(context, result)
 
 
+def list_snapshots_for_job(job: BackupJobConfig) -> list[dict]:
+    client = _create_docker_client()
+    repository = create_repository_handler(job.repository, client)
+    context = _job_context(job, repository.get_repo_path())
+    command = _with_timeout_command(
+        [
+            "restic",
+            "-r",
+            repository.get_repo_path(),
+            "snapshots",
+            "--json",
+            "--tag",
+            job.source.volume_name,
+        ]
+    )
+
+    with repository.launch(None, ["-c", command]) as container:
+        status = cast(dict[str, int], container.wait())
+        result = cast(
+            ExecResult,
+            SimpleNamespace(
+                output=container.logs(stdout=True, stderr=True),
+                exit_code=status["StatusCode"],
+            ),
+        )
+
+    lines = _decode_output_lines(result)
+
+    if result.exit_code != 0:
+        msg = parser_restic_exit_error(lines)
+        message = msg.message if msg else (_last_output_line(lines) or "unknown error")
+        logger.warning("Snapshot lookup failed %s error=%s", context, message)
+        raise RuntimeError(message)
+
+    try:
+        snapshots = json.loads(cast(bytes, result.output or b"[]").decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        logger.warning("Snapshot lookup returned invalid JSON %s", context)
+        raise RuntimeError("invalid snapshot payload") from exc
+
+    if not isinstance(snapshots, list):
+        logger.warning("Snapshot lookup returned non-list payload %s", context)
+        raise RuntimeError("invalid snapshot payload")
+
+    return sorted(snapshots, key=lambda snapshot: snapshot.get("time") or "", reverse=True)
+
+
 def report_result(job: BackupJobConfig, context: str, result: ExecResult) -> None:
     lines = cast(bytes, result.output or b"").decode("utf-8").splitlines()
 
@@ -188,6 +237,10 @@ def _restore_context(
 
 def _with_timeout(command: str) -> str:
     return f"timeout {RESTIC_TIMEOUT_SECONDS}s {command}"
+
+
+def _with_timeout_command(command: list[str]) -> str:
+    return _with_timeout(shlex.join(command))
 
 
 def _create_docker_client() -> DockerClient:
