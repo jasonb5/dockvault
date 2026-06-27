@@ -1,6 +1,7 @@
 import json
 import logging
 import shlex
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Annotated, cast
 
@@ -10,6 +11,7 @@ from docker.models.containers import ExecResult
 from pydantic import ValidationError
 
 from dockvault.docker import get_jobs
+from dockvault.history import record_backup_run
 from dockvault.models.job import BackupJobConfig
 from dockvault.models.restic import (
     ResticExitError,
@@ -73,6 +75,7 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
     source = create_source_handler(job.source)
     repository = create_repository_handler(job.repository, client)
     context = _job_context(job, repository.get_repo_path())
+    started_at = datetime.now(timezone.utc)
 
     volumes = source.get_volumes()
     logger.info("Starting backup %s", context)
@@ -95,8 +98,9 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
         finally:
             if result is None:
                 logger.error("Backup produced no result %s", context)
+                record_backup_run(job.name, "failed", started_at=started_at, error="no result")
             else:
-                report_result(job, context, result)
+                report_result(job, context, result, started_at)
 
 
 def run_restore(
@@ -183,7 +187,12 @@ def list_snapshots_for_job(job: BackupJobConfig) -> list[dict]:
     return sorted(snapshots, key=lambda snapshot: snapshot.get("time") or "", reverse=True)
 
 
-def report_result(job: BackupJobConfig, context: str, result: ExecResult) -> None:
+def report_result(
+    job: BackupJobConfig,
+    context: str,
+    result: ExecResult,
+    started_at: datetime,
+) -> None:
     lines = cast(bytes, result.output or b"").decode("utf-8").splitlines()
 
     match result.exit_code:
@@ -199,8 +208,15 @@ def report_result(job: BackupJobConfig, context: str, result: ExecResult) -> Non
                     _format_bytes(msg.data_added),
                     msg.total_duration,
                 )
+                record_backup_run(
+                    job.name,
+                    "succeeded",
+                    started_at=started_at,
+                    snapshot_id=msg.snapshot_id,
+                )
             else:
                 logger.warning("Could not parse Restic output %s", context)
+                record_backup_run(job.name, "succeeded", started_at=started_at)
         case 1:
             msg = parser_restic_exit_error(lines)
 
@@ -210,10 +226,23 @@ def report_result(job: BackupJobConfig, context: str, result: ExecResult) -> Non
                     context,
                     msg.message,
                 )
+                record_backup_run(
+                    job.name,
+                    "failed",
+                    started_at=started_at,
+                    error=msg.message,
+                )
             else:
                 logger.warning("Could not parse Restic output %s", context)
+                record_backup_run(job.name, "failed", started_at=started_at)
         case code:
             logger.warning("Unknown restic exit code %s %s", code, context)
+            record_backup_run(
+                job.name,
+                "failed",
+                started_at=started_at,
+                error=f"exit_code={code}",
+            )
 
 
 def _job_context(job: BackupJobConfig, repository_path: str) -> str:

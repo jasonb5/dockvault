@@ -11,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from dockvault.commands.backup import run_backup
 from dockvault.commands.retention import run_retention
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
+from dockvault.history import clear_backup_history
 from dockvault.models.job import BackupJobConfig
 from dockvault.models.repository import BackupRepository
 
@@ -214,6 +215,7 @@ def reconcile_backups(
 
     for job in scheduler.get_jobs():
         if job.id.startswith("backup:") and job.id not in ids:
+            clear_backup_history([job.id.removeprefix("backup:")])
             scheduler.remove_job(job.id)
             removed_backup_jobs += 1
         if job.id.startswith("retention:") and job.id not in retention_ids:

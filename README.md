@@ -132,12 +132,16 @@ Endpoints:
   Returns readiness based on scheduler state and Docker job discovery.
 - `GET /jobs`
   Returns discovered backup jobs with source, repository, schedule, and next
-  scheduled run time when the job is currently present in the scheduler.
+  scheduled run time when the job is currently present in the scheduler. When
+  available, responses also include the latest in-memory backup run record for
+  the current server process.
 - `GET /jobs/{name}`
   Returns one discovered backup job by name.
 - `GET /jobs/{name}/snapshots`
   Returns snapshots from the job's restic repository filtered by the job's
   source volume tag.
+- `GET /jobs/{name}/history`
+  Returns recent in-memory backup run records for the current server process.
 
 `/ready` failure reasons currently include:
 - `scheduler_unavailable`
@@ -154,6 +158,7 @@ curl http://127.0.0.1:8000/ready
 curl http://127.0.0.1:8000/jobs
 curl http://127.0.0.1:8000/jobs/media-nightly
 curl http://127.0.0.1:8000/jobs/media-nightly/snapshots
+curl http://127.0.0.1:8000/jobs/media-nightly/history
 ```
 
 ## Local Development

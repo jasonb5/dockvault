@@ -91,10 +91,16 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
         build_backup_command=lambda repository, hostname: f"backup to {repository} host={hostname}",
     )
     repo = FakeRepository()
+    recorded = []
 
     monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
     monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: repo)
+    monkeypatch.setattr(
+        backup,
+        "record_backup_run",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
 
     caplog.set_level("INFO")
 
@@ -108,6 +114,9 @@ def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
     assert "added=2.0 KiB" in caplog.text
     assert repo.command == ["-c", "timeout 21600s backup to /repo host=charon"]
     assert repo.hostname == "charon"
+    assert recorded == [
+        (("media", "succeeded"), {"started_at": recorded[0][1]["started_at"], "snapshot_id": "abc123"})
+    ]
 
 
 def test_run_backup_wraps_restic_command_with_timeout(monkeypatch, caplog) -> None:
@@ -190,10 +199,16 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
         get_volumes=lambda: {},
         build_backup_command=lambda repository, hostname: "backup",
     )
+    recorded = []
 
     monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
     monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
     monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+    monkeypatch.setattr(
+        backup,
+        "record_backup_run",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
 
     caplog.set_level("DEBUG")
 
@@ -212,6 +227,9 @@ def test_run_backup_logs_exit_error(monkeypatch, caplog) -> None:
     assert failure_records, (
         f"'Backup failed' must be logged at WARNING+, got:\n{caplog.text}"
     )
+    assert recorded == [
+        (("media", "failed"), {"started_at": recorded[0][1]["started_at"], "error": "repository does not exist"})
+    ]
 
 
 def test_run_restore_logs_completion_and_uses_target_volume(monkeypatch, caplog) -> None:

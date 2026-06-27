@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from dockvault.api import (
     _readiness_payload,
     get_job,
+    get_job_history,
     get_job_snapshots,
     health,
     list_jobs,
@@ -107,6 +108,18 @@ def test_list_jobs_returns_discovered_jobs_with_next_run_time(monkeypatch) -> No
 
     monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
     monkeypatch.setattr("dockvault.api.get_jobs", lambda client: jobs)
+    monkeypatch.setattr(
+        "dockvault.api.get_last_backup_run",
+        lambda name: {
+            "status": "succeeded",
+            "started_at": datetime(2026, 6, 27, 1, 0, tzinfo=timezone.utc),
+            "finished_at": datetime(2026, 6, 27, 1, 1, tzinfo=timezone.utc),
+            "snapshot_id": "snap-123",
+            "error": None,
+        }
+        if name == "alpha"
+        else None,
+    )
 
     response = list_jobs(SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(scheduler=scheduler))))
 
@@ -118,6 +131,13 @@ def test_list_jobs_returns_discovered_jobs_with_next_run_time(monkeypatch) -> No
                 "source": {"type": "files", "volume_name": "alpha-volume"},
                 "repository": {"type": "local", "path": "/repo-alpha", "password_env": "RESTIC_PASSWORD"},
                 "next_run_time": "2026-06-27T01:00:00Z",
+                "last_run": {
+                    "status": "succeeded",
+                    "started_at": "2026-06-27T01:00:00Z",
+                    "finished_at": "2026-06-27T01:01:00Z",
+                    "snapshot_id": "snap-123",
+                    "error": None,
+                },
             },
             {
                 "name": "beta",
@@ -125,6 +145,7 @@ def test_list_jobs_returns_discovered_jobs_with_next_run_time(monkeypatch) -> No
                 "source": {"type": "files", "volume_name": "beta-volume"},
                 "repository": {"type": "local", "path": "/repo-beta", "password_env": "RESTIC_PASSWORD"},
                 "next_run_time": None,
+                "last_run": None,
             },
         ]
     }
@@ -146,6 +167,7 @@ def test_get_job_returns_matching_job(monkeypatch) -> None:
 
     monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
     monkeypatch.setattr("dockvault.api.get_jobs", lambda client: jobs)
+    monkeypatch.setattr("dockvault.api.get_last_backup_run", lambda name: None)
 
     response = get_job(
         "alpha",
@@ -158,6 +180,7 @@ def test_get_job_returns_matching_job(monkeypatch) -> None:
         "source": {"type": "files", "volume_name": "alpha-volume"},
         "repository": {"type": "local", "path": "/repo-alpha", "password_env": "RESTIC_PASSWORD"},
         "next_run_time": None,
+        "last_run": None,
     }
 
 
@@ -237,3 +260,55 @@ def test_get_job_snapshots_returns_502_when_snapshot_lookup_fails(monkeypatch) -
 
     assert excinfo.value.status_code == 502
     assert excinfo.value.detail == "snapshot_lookup_failed"
+
+
+def test_get_job_history_returns_recent_runs(monkeypatch) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "alpha",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "alpha-volume"},
+            "repository": {"type": "local", "path": "/repo-alpha"},
+        }
+    )
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
+    monkeypatch.setattr(
+        "dockvault.api.get_backup_history",
+        lambda name: [
+            {
+                "status": "failed",
+                "started_at": datetime(2026, 6, 27, 1, 5, tzinfo=timezone.utc),
+                "finished_at": datetime(2026, 6, 27, 1, 6, tzinfo=timezone.utc),
+                "snapshot_id": None,
+                "error": "repository is locked",
+            },
+            {
+                "status": "succeeded",
+                "started_at": datetime(2026, 6, 26, 1, 0, tzinfo=timezone.utc),
+                "finished_at": datetime(2026, 6, 26, 1, 1, tzinfo=timezone.utc),
+                "snapshot_id": "snap-122",
+                "error": None,
+            },
+        ],
+    )
+
+    assert get_job_history("alpha") == {
+        "runs": [
+            {
+                "status": "failed",
+                "started_at": "2026-06-27T01:05:00Z",
+                "finished_at": "2026-06-27T01:06:00Z",
+                "snapshot_id": None,
+                "error": "repository is locked",
+            },
+            {
+                "status": "succeeded",
+                "started_at": "2026-06-26T01:00:00Z",
+                "finished_at": "2026-06-26T01:01:00Z",
+                "snapshot_id": "snap-122",
+                "error": None,
+            },
+        ]
+    }

@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from dockvault.commands.backup import list_snapshots_for_job
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
+from dockvault.history import get_backup_history, get_last_backup_run
 from dockvault.models.job import BackupJobConfig
 from dockvault.scheduler import create_scheduler
 
@@ -36,6 +37,19 @@ def _isoformat_utc(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _history_payload(record: dict | None) -> dict | None:
+    if record is None:
+        return None
+
+    return {
+        "status": record["status"],
+        "started_at": _isoformat_utc(record["started_at"]),
+        "finished_at": _isoformat_utc(record["finished_at"]),
+        "snapshot_id": record["snapshot_id"],
+        "error": record["error"],
+    }
+
+
 def _job_payload(app: FastAPI, job: BackupJobConfig) -> dict:
     scheduler = getattr(app.state, "scheduler", None)
     scheduled_job = None
@@ -49,6 +63,7 @@ def _job_payload(app: FastAPI, job: BackupJobConfig) -> dict:
         "source": job.source.model_dump(mode="json"),
         "repository": job.repository.model_dump(mode="json"),
         "next_run_time": _isoformat_utc(getattr(scheduled_job, "next_run_time", None)),
+        "last_run": _history_payload(get_last_backup_run(job.name)),
     }
 
 
@@ -130,3 +145,10 @@ def get_job_snapshots(name: str) -> dict[str, list[dict]]:
         raise HTTPException(status_code=502, detail="snapshot_lookup_failed") from exc
 
     return {"snapshots": snapshots}
+
+
+@app.get("/jobs/{name}/history")
+def get_job_history(name: str) -> dict[str, list[dict]]:
+    job = _get_job_by_name(name)
+
+    return {"runs": [_history_payload(record) for record in get_backup_history(job.name)]}
