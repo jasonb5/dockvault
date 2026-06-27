@@ -238,7 +238,7 @@ def test_reconcile_schedules_one_retention_job_per_unique_repository(monkeypatch
     ]
     assert len(retention_jobs) == 1
     assert retention_jobs[0]["trigger"] == "cron:15 3 * * *:UTC"
-    assert retention_jobs[0]["args"][1:] == ["/repo-shared", semaphore]
+    assert retention_jobs[0]["args"][1:] == ["/repo-shared", "--keep-last 7", semaphore]
 
 
 def test_reconcile_removes_retention_jobs_when_retention_disabled(monkeypatch) -> None:
@@ -286,6 +286,106 @@ def test_reconcile_logs_and_skips_retention_when_args_missing(monkeypatch, caplo
         for args, kwargs in fake_scheduler.added
     )
     assert any("DOCKVAULT_RETENTION_ARGS is empty" in record.getMessage() for record in caplog.records)
+
+
+def test_reconcile_schedules_per_repo_retention_without_global_args(monkeypatch) -> None:
+    fake_scheduler = _FakeScheduler()
+    semaphore = threading.BoundedSemaphore(1)
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-volume"},
+                "repository": {"type": "local", "path": "/repo"},
+                "retention": {"keep_daily": 14},
+            }
+        )
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setattr("dockvault.scheduler.socket.gethostname", lambda: "detected-host")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_SCHEDULE", "15 3 * * *")
+    monkeypatch.delenv("DOCKVAULT_RETENTION_ARGS", raising=False)
+    monkeypatch.setattr(
+        "dockvault.scheduler.CronTrigger.from_crontab",
+        lambda schedule, timezone: f"cron:{schedule}:{timezone}",
+    )
+
+    reconcile_backups(fake_scheduler, semaphore)
+
+    retention_jobs = [
+        kwargs for args, kwargs in fake_scheduler.added if args[0].__name__ == "run_retention_limited"
+    ]
+    assert len(retention_jobs) == 1
+    assert retention_jobs[0]["args"][1:] == ["/repo", "--keep-daily 14", semaphore]
+
+
+def test_reconcile_skips_repo_when_explicit_retention_disabled(monkeypatch) -> None:
+    fake_scheduler = _FakeScheduler()
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-volume"},
+                "repository": {"type": "local", "path": "/repo"},
+                "retention": {"enabled": False},
+            }
+        )
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setenv("DOCKVAULT_RETENTION_SCHEDULE", "15 3 * * *")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_ARGS", "--keep-last 7")
+
+    reconcile_backups(fake_scheduler, threading.BoundedSemaphore(1))
+
+    assert not any(
+        args[0].__name__ == "run_retention_limited"
+        for args, kwargs in fake_scheduler.added
+    )
+
+
+def test_reconcile_skips_conflicting_repo_retention_policies(monkeypatch, caplog) -> None:
+    fake_scheduler = _FakeScheduler()
+    jobs = [
+        BackupJobConfig.model_validate(
+            {
+                "name": "media-a",
+                "schedule": "0 1 * * *",
+                "source": {"type": "files", "volume_name": "media-a"},
+                "repository": {"type": "local", "path": "/repo"},
+                "retention": {"keep_last": 7},
+            }
+        ),
+        BackupJobConfig.model_validate(
+            {
+                "name": "media-b",
+                "schedule": "30 1 * * *",
+                "source": {"type": "files", "volume_name": "media-b"},
+                "repository": {"type": "local", "path": "/repo"},
+                "retention": {"keep_daily": 14},
+            }
+        ),
+    ]
+
+    monkeypatch.setattr("dockvault.scheduler.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.scheduler.get_jobs", lambda client: jobs)
+    monkeypatch.setenv("DOCKVAULT_RETENTION_SCHEDULE", "15 3 * * *")
+    monkeypatch.setenv("DOCKVAULT_RETENTION_ARGS", "--keep-last 30")
+
+    caplog.set_level(logging.WARNING)
+
+    reconcile_backups(fake_scheduler, threading.BoundedSemaphore(1))
+
+    assert not any(
+        args[0].__name__ == "run_retention_limited"
+        for args, kwargs in fake_scheduler.added
+    )
+    assert any("Conflicting retention policies" in record.getMessage() for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -672,14 +772,14 @@ def test_run_retention_limited_logs_when_waiting_for_slot(monkeypatch, caplog) -
 
     monkeypatch.setattr(
         "dockvault.scheduler.run_retention",
-        lambda selected, repo_name=None: calls.append((selected, repo_name)),
+        lambda selected, repo_name=None, retention_args=None: calls.append((selected, repo_name, retention_args)),
     )
 
     caplog.set_level(logging.INFO)
 
-    run_retention_limited(repository, "/repo", semaphore)
+    run_retention_limited(repository, "/repo", "--keep-last 7", semaphore)
 
-    assert calls == [(repository, "/repo")]
+    assert calls == [(repository, "/repo", "--keep-last 7")]
     assert semaphore.acquire_calls == [False, True]
     assert semaphore.release_calls == 1
     assert any(

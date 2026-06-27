@@ -27,6 +27,16 @@ def test_build_retention_command_keeps_existing_prune(monkeypatch) -> None:
     )
 
 
+def test_build_retention_command_uses_explicit_args(monkeypatch) -> None:
+    monkeypatch.delenv("DOCKVAULT_RETENTION_ARGS", raising=False)
+
+    command = retention._build_retention_command("/repo", "--keep-daily 14")
+
+    assert command == (
+        "timeout 21600s restic -r /repo forget --json --keep-daily 14 --prune"
+    )
+
+
 def test_run_retention_logs_completion(monkeypatch, caplog) -> None:
     repository_config = LocalRepository(type="local", path="/repo")
     container = SimpleNamespace(

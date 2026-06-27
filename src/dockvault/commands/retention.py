@@ -17,7 +17,11 @@ from dockvault.repository.factory import create_repository_handler
 logger = logging.getLogger(__name__)
 
 
-def run_retention(repository_config: BackupRepository, repo_name: str) -> None:
+def run_retention(
+    repository_config: BackupRepository,
+    repo_name: str,
+    retention_args: str | None = None,
+) -> None:
     client = _create_docker_client()
     repository = create_repository_handler(repository_config, client)
     repo_path = repository.get_repo_path()
@@ -26,7 +30,7 @@ def run_retention(repository_config: BackupRepository, repo_name: str) -> None:
     logger.info("Starting retention %s", context)
 
     result: ExecResult | None = None
-    command = _build_retention_command(repo_path)
+    command = _build_retention_command(repo_path, retention_args)
 
     with repository.launch(None, ["-c", command]) as container:
         try:
@@ -47,14 +51,14 @@ def run_retention(repository_config: BackupRepository, repo_name: str) -> None:
                 _report_result(context, result)
 
 
-def _build_retention_command(repository: str) -> str:
+def _build_retention_command(repository: str, retention_args: str | None = None) -> str:
     command = [
         "restic",
         "-r",
         repository,
         "forget",
         "--json",
-        *shlex.split(_get_retention_args()),
+        *shlex.split(retention_args or _get_retention_args()),
     ]
 
     if "--prune" not in command:

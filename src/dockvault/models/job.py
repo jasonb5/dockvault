@@ -3,6 +3,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from dockvault.models.repository import BackupRepository
+from dockvault.models.retention import RetentionConfig
 from dockvault.models.source import BackupSource
 
 PREFIX = "dockvault."
@@ -13,6 +14,7 @@ class BackupJobConfig(BaseModel):
     source: BackupSource
     repository: BackupRepository
     schedule: str
+    retention: RetentionConfig | None = None
 
 
 def labels_to_config(labels: dict[str, str]) -> dict[str, Any]:

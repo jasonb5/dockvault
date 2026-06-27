@@ -82,8 +82,10 @@ Optional:
   Cron expression in `UTC` for native restic retention runs. If unset,
   retention scheduling is disabled.
 - `DOCKVAULT_RETENTION_ARGS`
-  Arguments passed to `restic forget`. Example: `--keep-last 7 --keep-daily 14`.
-  Dockvault automatically adds `--prune` if you do not include it.
+  Default arguments passed to `restic forget` for repositories that do not
+  declare a per-repository retention policy. Example:
+  `--keep-last 7 --keep-daily 14`. Dockvault automatically adds `--prune` if
+  you do not include it.
 
 If you set `dockvault.repository.password_env`, that variable must also be set
 in the Dockvault process environment.
@@ -277,9 +279,10 @@ Notes:
 Dockvault can schedule native restic retention runs from the server process.
 
 Behavior:
-- retention is configured globally with environment variables
+- retention uses `DOCKVAULT_RETENTION_ARGS` as the default policy
 - one retention job is scheduled per unique repository path
 - repositories shared by multiple backup jobs are deduplicated
+- per-repository labels can override or disable the global policy
 - retention jobs share the same global concurrency limit as scheduled backups
 
 Example configuration:
@@ -295,7 +298,34 @@ That makes Dockvault run a command equivalent to:
 restic -r /repo forget --json --keep-last 7 --keep-daily 14 --keep-weekly 8 --prune
 ```
 
-Retention is server-configured rather than volume-configured.
+Per-repository overrides:
+
+- `dockvault.retention.enabled=false`
+  disables scheduled retention for that repository even when global retention is
+  configured.
+- `dockvault.retention.keep_last=<n>`
+- `dockvault.retention.keep_daily=<n>`
+- `dockvault.retention.keep_weekly=<n>`
+- `dockvault.retention.keep_monthly=<n>`
+- `dockvault.retention.keep_yearly=<n>`
+
+Example labels on one backup volume:
+
+```text
+dockvault.retention.keep_last=7
+dockvault.retention.keep_daily=14
+dockvault.retention.keep_weekly=8
+```
+
+Precedence:
+
+- explicit per-repository retention labels override the global retention args
+- `dockvault.retention.enabled=false` opts the repository out of global retention
+- repositories without retention labels inherit `DOCKVAULT_RETENTION_ARGS`
+
+If the same repository is discovered with conflicting explicit retention
+policies, Dockvault logs a warning and skips retention scheduling for that
+repository.
 
 ## Failure Behavior
 
@@ -321,7 +351,8 @@ Current behavior:
   is being prepared; other jobs are unaffected.
 - Retention misconfiguration:
   if `DOCKVAULT_RETENTION_SCHEDULE` is set but `DOCKVAULT_RETENTION_ARGS` is
-  empty, Dockvault logs a warning and skips retention scheduling.
+  empty, Dockvault logs a warning and only schedules repositories with explicit
+  per-repository retention labels.
 - Readiness endpoint:
   `/ready` returns `503` when the scheduler is unavailable/stopped, Docker is
   unavailable, or job discovery fails.

@@ -4,6 +4,7 @@ import socket
 import hashlib
 import threading
 import time
+from typing import Literal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -14,6 +15,7 @@ from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 from dockvault.history import clear_backup_history
 from dockvault.models.job import BackupJobConfig
 from dockvault.models.repository import BackupRepository
+from dockvault.models.retention import RetentionConfig
 
 logger = logging.getLogger(__name__)
 JOB_DISCOVERY_ATTEMPTS = 3
@@ -66,18 +68,57 @@ def _get_retention_schedule() -> str | None:
 
 
 def _retention_is_enabled() -> bool:
-    if _get_retention_schedule() is None:
-        return False
+    return _get_retention_schedule() is not None
 
-    retention_args = os.getenv("DOCKVAULT_RETENTION_ARGS")
 
-    if retention_args is None or not retention_args.strip():
-        logger.warning(
-            "Retention schedule configured but DOCKVAULT_RETENTION_ARGS is empty; skipping retention scheduling",
+def _get_global_retention_args() -> str | None:
+    value = os.getenv("DOCKVAULT_RETENTION_ARGS")
+
+    if value is None or not value.strip():
+        return None
+
+    return value.strip()
+
+
+def _build_retention_args(policy: RetentionConfig) -> str:
+    args: list[str] = []
+
+    for flag, value in (
+        ("--keep-last", policy.keep_last),
+        ("--keep-daily", policy.keep_daily),
+        ("--keep-weekly", policy.keep_weekly),
+        ("--keep-monthly", policy.keep_monthly),
+        ("--keep-yearly", policy.keep_yearly),
+    ):
+        if value is not None:
+            args.extend([flag, str(value)])
+
+    if not args:
+        raise ValueError(
+            "retention override requires at least one keep_* option",
         )
-        return False
 
-    return True
+    return " ".join(args)
+
+
+def _get_explicit_retention_policy(
+    job: BackupJobConfig,
+) -> tuple[Literal["disabled", "args"], str | None] | None:
+    policy = job.retention
+
+    if policy is None:
+        return None
+
+    if policy.enabled is False:
+        return ("disabled", None)
+
+    if policy.has_options():
+        return ("args", _build_retention_args(policy))
+
+    if policy.enabled is True:
+        raise ValueError("dockvault.retention.enabled=true requires keep_* labels")
+
+    return None
 
 
 def _retention_job_id(repository: BackupRepository) -> str:
@@ -109,6 +150,7 @@ def run_backup_limited(
 def run_retention_limited(
     repository: BackupRepository,
     repo_name: str,
+    retention_args: str,
     semaphore: threading.BoundedSemaphore,
 ) -> None:
     if not semaphore.acquire(blocking=False):
@@ -116,7 +158,7 @@ def run_retention_limited(
         semaphore.acquire()
 
     try:
-        run_retention(repository, repo_name)
+        run_retention(repository, repo_name, retention_args)
     finally:
         semaphore.release()
 
@@ -159,14 +201,48 @@ def reconcile_backups(
 
     hostname = _get_backup_hostname()
     retention_ids: list[str] = []
-    repositories: dict[str, BackupRepository] = {}
+    repositories: dict[str, tuple[BackupRepository, str]] = {}
+    repo_policies: dict[str, tuple[Literal["disabled", "args"], str | None] | None] = {}
+    invalid_retention_repos: set[str] = set()
     scheduled_backup_jobs = 0
     failed_backup_jobs = 0
     scheduled_retention_jobs = 0
     failed_retention_jobs = 0
+    global_retention_args = _get_global_retention_args()
+
+    if _get_retention_schedule() is not None and global_retention_args is None:
+        logger.warning(
+            "Retention schedule configured but DOCKVAULT_RETENTION_ARGS is empty; only repositories with per-repo retention labels will be scheduled",
+        )
 
     for job in jobs:
-        repositories.setdefault(_retention_job_id(job.repository), job.repository)
+        retention_id = _retention_job_id(job.repository)
+        repositories.setdefault(retention_id, (job.repository, _retention_repo_name(job.repository)))
+
+        try:
+            explicit_policy = _get_explicit_retention_policy(job)
+        except ValueError as exc:
+            invalid_retention_repos.add(retention_id)
+            failed_retention_jobs += 1
+            logger.warning(
+                "Invalid retention policy job=%s repo=%s: %s",
+                job.name,
+                _retention_repo_name(job.repository),
+                exc,
+            )
+            explicit_policy = None
+
+        if explicit_policy is not None:
+            existing_policy = repo_policies.get(retention_id)
+            if existing_policy is None:
+                repo_policies[retention_id] = explicit_policy
+            elif existing_policy != explicit_policy:
+                invalid_retention_repos.add(retention_id)
+                failed_retention_jobs += 1
+                logger.warning(
+                    "Conflicting retention policies for repo=%s",
+                    _retention_repo_name(job.repository),
+                )
 
         try:
             _ = scheduler.add_job(
@@ -188,12 +264,25 @@ def reconcile_backups(
     if _retention_is_enabled():
         retention_schedule = _get_retention_schedule()
 
-        for retention_id, repository in repositories.items():
+        for retention_id, (repository, repo_name) in repositories.items():
+            if retention_id in invalid_retention_repos:
+                continue
+
+            policy = repo_policies.get(retention_id)
+            if policy is None:
+                if global_retention_args is None:
+                    continue
+                retention_args = global_retention_args
+            elif policy[0] == "disabled":
+                continue
+            else:
+                retention_args = policy[1]
+
             try:
                 _ = scheduler.add_job(
                     run_retention_limited,
                     trigger=CronTrigger.from_crontab(retention_schedule, timezone="UTC"),
-                    args=[repository, _retention_repo_name(repository), semaphore],
+                    args=[repository, repo_name, retention_args, semaphore],
                     id=retention_id,
                     max_instances=1,
                     replace_existing=True,
@@ -204,7 +293,7 @@ def reconcile_backups(
                 failed_retention_jobs += 1
                 logger.warning(
                     "Failed to add retention job repo=%s: %s",
-                    _retention_repo_name(repository),
+                    repo_name,
                     e,
                 )
             finally:
