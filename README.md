@@ -72,6 +72,9 @@ Required for backups:
   Default password variable consumed by the restic container.
 
 Optional:
+- `DOCKVAULT_SERVER_URL`
+  Default Dockvault API base URL for remote CLI commands such as `jobs`, `job`,
+  `snapshots`, and `history`.
 - `DOCKVAULT_HOSTNAME`
   Hostname to attach to backups. If unset, Dockvault uses the current host
   name.
@@ -111,6 +114,10 @@ Common commands:
 uv run dockvault version
 uv run dockvault server
 uv run dockvault doctor
+uv run dockvault jobs --server http://dockvault:8000
+uv run dockvault job media-nightly --server http://dockvault:8000
+uv run dockvault snapshots media-nightly --server http://dockvault:8000
+uv run dockvault history media-nightly --server http://dockvault:8000
 uv run dockvault backup list-jobs
 uv run dockvault backup create media-nightly
 uv run dockvault backup create media-nightly custom-hostname
@@ -125,6 +132,14 @@ Command behavior:
 - `dockvault server` starts the API and scheduler on `0.0.0.0:8000`
 - `dockvault doctor` verifies Docker access, discovered jobs, required password
   environment variables, and repository path mounts inside the container
+- `dockvault jobs --server <url>` prints discovered jobs from a remote
+  Dockvault server
+- `dockvault job <name> --server <url>` prints one discovered job from a remote
+  Dockvault server
+- `dockvault snapshots <name> --server <url>` prints remote snapshot data for a
+  discovered job
+- `dockvault history <name> --server <url>` prints remote in-memory run history
+  for a discovered job
 - `dockvault backup list-jobs` prints discovered job names
 - `dockvault backup create <name> [hostname]` runs matching jobs immediately
 - `dockvault backup snapshots <name>` prints matching job snapshots as JSON

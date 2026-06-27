@@ -1,9 +1,17 @@
 from importlib.metadata import version as package_version
+import json
 import os
 
 import typer
 import uvicorn
 
+from dockvault.client import (
+    DockvaultClientError,
+    get_history as get_remote_history,
+    get_job as get_remote_job,
+    get_jobs as get_remote_jobs,
+    get_snapshots as get_remote_snapshots,
+)
 from dockvault.commands.backup import app as backup_app
 from dockvault.commands.backup import _get_jobs_by_name, run_restore
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
@@ -17,7 +25,37 @@ def version() -> None:
     print(package_version("dockvault"))
 
 
+def _print_remote_payload(fetcher, server: str | None, *args: str) -> None:
+    try:
+        payload = fetcher(server, *args)
+    except DockvaultClientError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 app.add_typer(backup_app, name="backup")
+
+
+@app.command()
+def jobs(server: str | None = typer.Option(None, "--server")) -> None:
+    _print_remote_payload(get_remote_jobs, server)
+
+
+@app.command()
+def job(name: str, server: str | None = typer.Option(None, "--server")) -> None:
+    _print_remote_payload(get_remote_job, server, name)
+
+
+@app.command()
+def snapshots(name: str, server: str | None = typer.Option(None, "--server")) -> None:
+    _print_remote_payload(get_remote_snapshots, server, name)
+
+
+@app.command()
+def history(name: str, server: str | None = typer.Option(None, "--server")) -> None:
+    _print_remote_payload(get_remote_history, server, name)
 
 
 @app.command()
