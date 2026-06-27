@@ -1,6 +1,7 @@
 from importlib.metadata import version as package_version
 import json
 import os
+from datetime import datetime, timezone
 
 import typer
 import uvicorn
@@ -10,11 +11,13 @@ from dockvault.client import (
     get_history as get_remote_history,
     get_job as get_remote_job,
     get_jobs as get_remote_jobs,
+    restore as restore_remote,
     get_snapshots as get_remote_snapshots,
 )
 from dockvault.commands.backup import app as backup_app
-from dockvault.commands.backup import _get_jobs_by_name, run_restore
+from dockvault.commands.backup import _get_jobs_by_name, list_snapshots_for_job, run_restore
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
+from dockvault.history import get_backup_history, get_last_backup_run
 from dockvault.logging import LOGGING_CONFIG, setup_logging
 
 app = typer.Typer(help="dockvault")
@@ -35,27 +38,91 @@ def _print_remote_payload(fetcher, server: str | None, *args: str) -> None:
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def _server_is_configured(server: str | None) -> bool:
+    return bool(server or os.getenv("DOCKVAULT_SERVER_URL"))
+
+
+def _isoformat_utc(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _history_payload(record: dict | None) -> dict | None:
+    if record is None:
+        return None
+
+    return {
+        "status": record["status"],
+        "started_at": _isoformat_utc(record["started_at"]),
+        "finished_at": _isoformat_utc(record["finished_at"]),
+        "snapshot_id": record["snapshot_id"],
+        "error": record["error"],
+    }
+
+
+def _local_job_payload(job) -> dict:
+    return {
+        "name": job.name,
+        "schedule": job.schedule,
+        "source": job.source.model_dump(mode="json"),
+        "repository": job.repository.model_dump(mode="json"),
+        "next_run_time": None,
+        "last_run": _history_payload(get_last_backup_run(job.name)),
+    }
+
+
+def _print_payload(payload: dict) -> None:
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _get_local_jobs() -> list:
+    client = create_docker_client()
+    return sorted(list(get_jobs(client)), key=lambda job: job.name or "")
+
+
 app.add_typer(backup_app, name="backup")
 
 
 @app.command()
 def jobs(server: str | None = typer.Option(None, "--server")) -> None:
-    _print_remote_payload(get_remote_jobs, server)
+    if _server_is_configured(server):
+        _print_remote_payload(get_remote_jobs, server)
+        return
+
+    _print_payload({"jobs": [_local_job_payload(job) for job in _get_local_jobs()]})
 
 
 @app.command()
 def job(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    _print_remote_payload(get_remote_job, server, name)
+    if _server_is_configured(server):
+        _print_remote_payload(get_remote_job, server, name)
+        return
+
+    _print_payload(_local_job_payload(_get_jobs_by_name(name)[0]))
 
 
 @app.command()
 def snapshots(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    _print_remote_payload(get_remote_snapshots, server, name)
+    if _server_is_configured(server):
+        _print_remote_payload(get_remote_snapshots, server, name)
+        return
+
+    _print_payload({"snapshots": list_snapshots_for_job(_get_jobs_by_name(name)[0])})
 
 
 @app.command()
 def history(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    _print_remote_payload(get_remote_history, server, name)
+    if _server_is_configured(server):
+        _print_remote_payload(get_remote_history, server, name)
+        return
+
+    job_config = _get_jobs_by_name(name)[0]
+    _print_payload({"runs": [_history_payload(record) for record in get_backup_history(job_config.name)]})
 
 
 @app.command()
@@ -64,9 +131,19 @@ def restore(
     snapshot: str,
     target_volume: str | None = typer.Argument(None),
     path: str | None = typer.Option(None, "--path"),
+    in_place: bool = typer.Option(False, "--in-place", help="Allow restore into the source volume"),
+    server: str | None = typer.Option(None, "--server"),
 ) -> None:
-    for job in _get_jobs_by_name(name):
-        run_restore(job, snapshot, target_volume, path)
+    if _server_is_configured(server):
+        _print_remote_payload(restore_remote, server, name, snapshot, target_volume, path, in_place)
+        return
+
+    try:
+        for job in _get_jobs_by_name(name):
+            run_restore(job, snapshot, target_volume, path, allow_in_place=in_place)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()

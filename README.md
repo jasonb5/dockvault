@@ -31,7 +31,8 @@ The backup command it builds for `files` sources is:
 restic -r /repo backup --host <hostname> --tag <volume-name> --json /data
 ```
 
-If no hostname override is configured, Dockvault uses the machine hostname.
+The backup hostname is configured on the server side. If no override is
+configured, Dockvault uses the machine hostname.
 
 ## Job Configuration
 
@@ -75,9 +76,16 @@ Optional:
 - `DOCKVAULT_SERVER_URL`
   Default Dockvault API base URL for remote CLI commands such as `jobs`, `job`,
   `snapshots`, and `history`.
+- `DOCKVAULT_API_TOKEN`
+  Shared bearer token for mutating API requests. When set on the server,
+  `POST` backup, check, and restore endpoints require
+  `Authorization: Bearer <token>`. Set the same value for remote CLI usage.
 - `DOCKVAULT_HOSTNAME`
   Hostname to attach to backups. If unset, Dockvault uses the current host
   name.
+- `DOCKVAULT_HISTORY_DB_PATH`
+  SQLite path used for persistent backup run history. Defaults to
+  `dockvault-history.sqlite3` in the current working directory.
 - `DOCKVAULT_MAX_CONCURRENT_BACKUPS`
   Global limit for concurrently running scheduled backup and retention jobs.
   Defaults to `1`.
@@ -118,9 +126,13 @@ uv run dockvault jobs --server http://dockvault:8000
 uv run dockvault job media-nightly --server http://dockvault:8000
 uv run dockvault snapshots media-nightly --server http://dockvault:8000
 uv run dockvault history media-nightly --server http://dockvault:8000
+uv run dockvault backup create media-nightly --server http://dockvault:8000
+uv run dockvault backup check media-nightly --server http://dockvault:8000
+uv run dockvault restore media-nightly latest --server http://dockvault:8000
+uv run dockvault restore media-nightly latest restore-target --path /photos/2024/image.jpg --server http://dockvault:8000
+uv run dockvault restore media-nightly latest --in-place
 uv run dockvault backup list-jobs
 uv run dockvault backup create media-nightly
-uv run dockvault backup create media-nightly custom-hostname
 uv run dockvault backup snapshots media-nightly
 uv run dockvault backup check media-nightly
 uv run dockvault restore media-nightly latest
@@ -140,15 +152,27 @@ Command behavior:
   discovered job
 - `dockvault history <name> --server <url>` prints remote in-memory run history
   for a discovered job
+- `dockvault restore <name> <snapshot> [target-volume] --server <url>` triggers
+  a restore through a remote Dockvault server
+- without `--server`, `dockvault jobs`, `dockvault job`, `dockvault snapshots`,
+  `dockvault history`, and `dockvault restore` use local Docker-backed behavior
+  by default; if `DOCKVAULT_SERVER_URL` is set they switch to remote mode
+  automatically
 - `dockvault backup list-jobs` prints discovered job names
-- `dockvault backup create <name> [hostname]` runs matching jobs immediately
+- `dockvault backup create <name>` runs matching jobs immediately
+- `dockvault backup create <name> --server <url>` triggers a backup
+  through a remote Dockvault server
 - `dockvault backup snapshots <name>` prints matching job snapshots as JSON
 - `dockvault backup check <name>` runs `restic check` for matching job repositories
+- `dockvault backup check <name> --server <url>` triggers a repository check
+  through a remote Dockvault server
 - `dockvault restore <name> <snapshot> [target-volume]` restores a
-  snapshot into the job's source volume by default, or into an override volume
-  when `target-volume` is provided
+  snapshot into an override volume when `target-volume` is provided
 - `dockvault restore <name> <snapshot> [target-volume] --path <path>` restores
   only the matching path from the snapshot into the selected target volume
+- restoring into the original source volume now requires explicit
+  `--in-place` confirmation for local CLI usage or `allow_in_place=true` in the
+  API payload
 
 ## API
 
@@ -168,7 +192,16 @@ Endpoints:
   Returns snapshots from the job's restic repository filtered by the job's
   source volume tag.
 - `GET /jobs/{name}/history`
-  Returns recent in-memory backup run records for the current server process.
+  Returns recent persisted backup run records from the local history database.
+- `POST /jobs/{name}/backup`
+  Triggers an immediate backup run. Requires bearer auth when
+  `DOCKVAULT_API_TOKEN` is configured.
+- `POST /jobs/{name}/check`
+  Triggers an immediate `restic check`. Requires bearer auth when
+  `DOCKVAULT_API_TOKEN` is configured.
+- `POST /jobs/{name}/restore`
+  Triggers a restore. Requires bearer auth when `DOCKVAULT_API_TOKEN` is
+  configured. Restoring into the source volume requires `allow_in_place=true`.
 
 `/ready` failure reasons currently include:
 - `scheduler_unavailable`
@@ -227,8 +260,9 @@ Dockvault assumes the following at runtime:
 3. Every local restic repository path referenced by job labels exists inside
    the Dockvault container at the same absolute path used in the label.
 4. The restic password environment variable required by each job is present in
-   the Dockvault process environment.
+    the Dockvault process environment.
 5. Port `8000` is reachable if you want health or readiness probing.
+6. The history database path is writable if you want persistent run history.
 
 Required runtime inputs:
 
@@ -236,6 +270,7 @@ Required runtime inputs:
 - Repository path mounts for every `dockvault.repository.path` in use
 - `RESTIC_PASSWORD`, or whichever variable name is configured through
   `dockvault.repository.password_env`
+- a writable location for `DOCKVAULT_HISTORY_DB_PATH` if you override it
 
 When using the checked-in Compose template, set
 `DOCKVAULT_REPOSITORY_ROOT` in `.env` so the host bind mount and the in-container
@@ -247,6 +282,9 @@ repository path stay identical. For example, if job labels use
 Optional runtime inputs:
 
 - `DOCKVAULT_HOSTNAME` to override the host name recorded in restic snapshots
+- `DOCKVAULT_API_TOKEN` to protect mutating API endpoints
+- `DOCKVAULT_HISTORY_DB_PATH` to move the SQLite history database onto a
+  persistent mount
 
 Operational assumptions:
 

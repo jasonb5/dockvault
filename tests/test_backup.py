@@ -383,9 +383,43 @@ def test_run_restore_logs_failure_with_last_output_line(monkeypatch, caplog) -> 
 
     caplog.set_level("WARNING")
 
-    backup.run_restore(job, "abc123")
+    with pytest.raises(RuntimeError, match="Fatal: restore failed"):
+        backup.run_restore(job, "abc123", allow_in_place=True)
 
     assert "Restore failed job=media snapshot=abc123 target_volume=media-volume repo=/repo exit_code=3 error=Fatal: restore failed" in caplog.text
+
+
+def test_validate_restore_request_rejects_in_place_restore_without_confirmation() -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="explicit in-place confirmation"):
+        backup.validate_restore_request(job, "latest")
+
+
+def test_validate_restore_request_requires_absolute_path() -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="restore path must be absolute"):
+        backup.validate_restore_request(
+            job,
+            "latest",
+            "restore-volume",
+            "photos/2024/image.jpg",
+        )
 
 
 def test_list_snapshots_for_job_runs_tagged_restic_snapshots(monkeypatch) -> None:

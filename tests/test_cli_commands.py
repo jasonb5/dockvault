@@ -33,10 +33,29 @@ def test_backup_create_runs_matching_jobs(monkeypatch) -> None:
     monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [job])
     monkeypatch.setattr(backup_module, "run_backup", lambda selected, hostname=None: captured.update({"job": selected, "hostname": hostname}))
 
-    result = CliRunner().invoke(app, ["backup", "create", "alpha", "charon"])
+    result = CliRunner().invoke(app, ["backup", "create", "alpha"])
 
     assert result.exit_code == 0
-    assert captured == {"job": job, "hostname": "charon"}
+    assert captured == {"job": job, "hostname": None}
+
+
+def test_backup_create_uses_remote_mode_when_server_is_configured(monkeypatch) -> None:
+    monkeypatch.setattr(
+        backup_module,
+        "trigger_remote_backup",
+        lambda server, name: {
+            "status": "ok",
+            "name": name,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["backup", "create", "alpha", "--server", "http://dockvault:8000"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == '{\n  "name": "alpha",\n  "status": "ok"\n}\n'
 
 
 def test_backup_create_fails_when_no_jobs_match(monkeypatch) -> None:
@@ -67,12 +86,13 @@ def test_restore_runs_matching_jobs(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_module,
         "run_restore",
-        lambda selected, snapshot, target_volume=None, restore_path=None: captured.update(
+        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False: captured.update(
             {
                 "job": selected,
                 "snapshot": snapshot,
                 "target_volume": target_volume,
                 "restore_path": restore_path,
+                "allow_in_place": allow_in_place,
             }
         ),
     )
@@ -85,6 +105,7 @@ def test_restore_runs_matching_jobs(monkeypatch) -> None:
         "snapshot": "latest",
         "target_volume": "restore-volume",
         "restore_path": None,
+        "allow_in_place": False,
     }
 
 
@@ -96,12 +117,13 @@ def test_restore_passes_path_option(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_module,
         "run_restore",
-        lambda selected, snapshot, target_volume=None, restore_path=None: captured.update(
+        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False: captured.update(
             {
                 "job": selected,
                 "snapshot": snapshot,
                 "target_volume": target_volume,
                 "restore_path": restore_path,
+                "allow_in_place": allow_in_place,
             }
         ),
     )
@@ -117,6 +139,7 @@ def test_restore_passes_path_option(monkeypatch) -> None:
         "snapshot": "latest",
         "target_volume": "restore-volume",
         "restore_path": "/photos/2024/image.jpg",
+        "allow_in_place": False,
     }
 
 
@@ -168,6 +191,25 @@ def test_backup_check_runs_matching_jobs(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert captured == {"job": job}
+
+
+def test_backup_check_uses_remote_mode_when_server_is_configured(monkeypatch) -> None:
+    monkeypatch.setattr(
+        backup_module,
+        "trigger_remote_check",
+        lambda server, name: {
+            "status": "ok",
+            "name": name,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["backup", "check", "alpha", "--server", "http://dockvault:8000"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == '{\n  "name": "alpha",\n  "status": "ok"\n}\n'
 
 
 def test_server_command_configures_uvicorn(monkeypatch) -> None:

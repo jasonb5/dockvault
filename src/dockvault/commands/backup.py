@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import shlex
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -10,6 +11,8 @@ from docker import DockerClient
 from docker.models.containers import ExecResult
 from pydantic import ValidationError
 
+from dockvault.client import DockvaultClientError, backup as trigger_remote_backup
+from dockvault.client import check as trigger_remote_check
 from dockvault.docker import get_jobs
 from dockvault.history import record_backup_run
 from dockvault.models.job import BackupJobConfig
@@ -38,9 +41,22 @@ def list_jobs():
 
 
 @app.command()
-def create(name: str, hostname: Annotated[str | None, typer.Argument()] = None):
+def create(
+    name: str,
+    server: str | None = typer.Option(None, "--server"),
+):
+    if server or os.getenv("DOCKVAULT_SERVER_URL"):
+        try:
+            payload = trigger_remote_backup(server, name)
+        except DockvaultClientError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
     for job in _get_jobs_by_name(name):
-        run_backup(job, hostname)
+        run_backup(job)
 
 
 @app.command()
@@ -50,12 +66,27 @@ def snapshots(name: str) -> None:
 
 
 @app.command()
-def check(name: str) -> None:
+def check(name: str, server: str | None = typer.Option(None, "--server")) -> None:
+    if server or os.getenv("DOCKVAULT_SERVER_URL"):
+        try:
+            payload = trigger_remote_check(server, name)
+        except DockvaultClientError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
     for job in _get_jobs_by_name(name):
         run_check(job)
 
 
-def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
+def run_backup(
+    job: BackupJobConfig,
+    hostname: str | None = None,
+    *,
+    raise_on_failure: bool = False,
+) -> None:
     client = _create_docker_client()
 
     source = create_source_handler(job.source)
@@ -81,12 +112,17 @@ def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
             )
         except Exception as e:
             logger.error("Backup failed %s error=%s", context, e)
+            if raise_on_failure:
+                raise RuntimeError(str(e)) from e
         finally:
             if result is None:
                 logger.error("Backup produced no result %s", context)
                 record_backup_run(job.name, "failed", started_at=started_at, error="no result")
             else:
-                report_result(job, context, result, started_at)
+                report_result(job, context, result, started_at, raise_on_failure=raise_on_failure)
+
+    if result is None and raise_on_failure:
+        raise RuntimeError("no result")
 
 
 def run_restore(
@@ -94,12 +130,20 @@ def run_restore(
     snapshot: str,
     target_volume: str | None = None,
     restore_path: str | None = None,
+    allow_in_place: bool = False,
 ) -> None:
+    snapshot, restore_target, restore_path = validate_restore_request(
+        job,
+        snapshot,
+        target_volume,
+        restore_path,
+        allow_in_place=allow_in_place,
+    )
+
     client = _create_docker_client()
 
     source = create_source_handler(job.source)
     repository = create_repository_handler(job.repository, client)
-    restore_target = target_volume or job.source.volume_name
     context = _restore_context(
         job,
         repository.get_repo_path(),
@@ -108,7 +152,7 @@ def run_restore(
         restore_path,
     )
 
-    volumes = source.get_restore_volumes(target_volume)
+    volumes = source.get_restore_volumes(restore_target)
     logger.info("Starting restore %s", context)
 
     result: ExecResult | None = None
@@ -128,11 +172,49 @@ def run_restore(
             )
         except Exception as e:
             logger.error("Restore failed %s error=%s", context, e)
+            raise RuntimeError(str(e)) from e
         finally:
             if result is None:
                 logger.error("Restore produced no result %s", context)
             else:
                 report_restore_result(context, result)
+
+    if result is None:
+        raise RuntimeError("no result")
+
+
+def validate_restore_request(
+    job: BackupJobConfig,
+    snapshot: str,
+    target_volume: str | None = None,
+    restore_path: str | None = None,
+    *,
+    allow_in_place: bool = False,
+) -> tuple[str, str, str | None]:
+    normalized_snapshot = snapshot.strip()
+
+    if not normalized_snapshot:
+        raise ValueError("snapshot must not be empty")
+
+    normalized_target_volume = target_volume.strip() if target_volume is not None else None
+    if normalized_target_volume == "":
+        raise ValueError("target volume must not be empty")
+
+    normalized_restore_path = restore_path.strip() if restore_path is not None else None
+    if normalized_restore_path == "":
+        raise ValueError("restore path must not be empty")
+    if normalized_restore_path is not None and not normalized_restore_path.startswith("/"):
+        raise ValueError("restore path must be absolute")
+    if normalized_restore_path == "/":
+        raise ValueError("use a full restore without --path instead of restoring '/'")
+
+    restore_target = normalized_target_volume or job.source.volume_name
+    if restore_target == job.source.volume_name and not allow_in_place:
+        raise ValueError(
+            "restoring into the source volume requires explicit in-place confirmation",
+        )
+
+    return normalized_snapshot, restore_target, normalized_restore_path
 
 
 def list_snapshots_for_job(job: BackupJobConfig) -> list[dict]:
@@ -214,6 +296,8 @@ def report_result(
     context: str,
     result: ExecResult,
     started_at: datetime,
+    *,
+    raise_on_failure: bool = False,
 ) -> None:
     lines = cast(bytes, result.output or b"").decode("utf-8").splitlines()
 
@@ -257,6 +341,8 @@ def report_result(
             else:
                 logger.warning("Could not parse Restic output %s", context)
                 record_backup_run(job.name, "failed", started_at=started_at)
+            if raise_on_failure:
+                raise RuntimeError(msg.message if msg else "backup failed")
         case code:
             logger.warning("Unknown restic exit code %s %s", code, context)
             record_backup_run(
@@ -265,6 +351,8 @@ def report_result(
                 started_at=started_at,
                 error=f"exit_code={code}",
             )
+            if raise_on_failure:
+                raise RuntimeError(f"exit_code={code}")
 
 
 def _job_context(job: BackupJobConfig, repository_path: str) -> str:
@@ -331,8 +419,10 @@ def report_restore_result(context: str, result: ExecResult) -> None:
 
             if message:
                 logger.warning("Restore failed %s exit_code=%s error=%s", context, code, message)
+                raise RuntimeError(message)
             else:
                 logger.warning("Restore failed %s exit_code=%s", context, code)
+                raise RuntimeError(f"exit_code={code}")
 
 
 def _decode_output_lines(result: ExecResult) -> list[str]:

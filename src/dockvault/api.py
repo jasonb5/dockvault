@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import os
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from dockvault.commands.backup import list_snapshots_for_job
+from dockvault.commands.backup import list_snapshots_for_job, run_backup, run_check, run_restore
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 from dockvault.history import get_backup_history, get_last_backup_run
 from dockvault.models.job import BackupJobConfig
@@ -27,8 +29,40 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+class RestoreRequest(BaseModel):
+    snapshot: str
+    target_volume: str | None = None
+    path: str | None = None
+    allow_in_place: bool = False
+
+
 def _error_detail(code: str, message: str, **extra) -> dict:
     return {"code": code, "message": message, **extra}
+
+
+def _get_configured_api_token() -> str | None:
+    value = os.getenv("DOCKVAULT_API_TOKEN")
+
+    if value is None or not value.strip():
+        return None
+
+    return value.strip()
+
+
+def require_api_auth(authorization: str | None = Header(None)) -> None:
+    configured_token = _get_configured_api_token()
+
+    if configured_token is None:
+        return
+
+    if authorization != f"Bearer {configured_token}":
+        raise HTTPException(
+            status_code=401,
+            detail=_error_detail(
+                "unauthorized",
+                "Missing or invalid API token",
+            ),
+        )
 
 
 def _isoformat_utc(value: datetime | None) -> str | None:
@@ -185,3 +219,94 @@ def get_job_history(name: str) -> dict[str, list[dict]]:
     job = _get_job_by_name(name)
 
     return {"runs": [_history_payload(record) for record in get_backup_history(job.name)]}
+
+
+@app.post("/jobs/{name}/restore")
+def restore_job(name: str, payload: RestoreRequest, authorization: str | None = Header(None)) -> dict:
+    require_api_auth(authorization)
+    job = _get_job_by_name(name)
+
+    try:
+        run_restore(
+            job,
+            payload.snapshot,
+            payload.target_volume,
+            payload.path,
+            allow_in_place=payload.allow_in_place,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(
+                "invalid_restore_request",
+                str(exc),
+                name=name,
+            ),
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=_error_detail(
+                "restore_failed",
+                f"Restore failed for job '{name}'",
+                name=name,
+                error=str(exc),
+            ),
+        ) from exc
+
+    return {
+        "status": "ok",
+        "name": name,
+        "snapshot": payload.snapshot,
+        "target_volume": payload.target_volume or job.source.volume_name,
+        "path": payload.path,
+        "allow_in_place": payload.allow_in_place,
+    }
+
+
+@app.post("/jobs/{name}/backup")
+def backup_job(name: str, authorization: str | None = Header(None)) -> dict:
+    require_api_auth(authorization)
+    job = _get_job_by_name(name)
+
+    try:
+        run_backup(job, raise_on_failure=True)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=_error_detail(
+                "backup_failed",
+                f"Backup failed for job '{name}'",
+                name=name,
+                error=str(exc),
+            ),
+        ) from exc
+
+    return {
+        "status": "ok",
+        "name": name,
+    }
+
+
+@app.post("/jobs/{name}/check")
+def check_job(name: str, authorization: str | None = Header(None)) -> dict:
+    require_api_auth(authorization)
+    job = _get_job_by_name(name)
+
+    try:
+        run_check(job)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=_error_detail(
+                "check_failed",
+                f"Repository check failed for job '{name}'",
+                name=name,
+                error=str(exc),
+            ),
+        ) from exc
+
+    return {
+        "status": "ok",
+        "name": name,
+    }
