@@ -400,14 +400,18 @@ def test_restore_job_runs_restore_and_returns_payload(monkeypatch) -> None:
     monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
     monkeypatch.setattr(
         "dockvault.api.run_restore",
-        lambda selected, snapshot, target_volume=None, path=None, allow_in_place=False: captured.update(
+        lambda selected, snapshot, target_volume=None, path=None, allow_in_place=False, dry_run=False: (
+            captured.update(
             {
                 "job": selected,
                 "snapshot": snapshot,
                 "target_volume": target_volume,
                 "path": path,
                 "allow_in_place": allow_in_place,
+                "dry_run": dry_run,
             }
+            )
+            or {"output": []}
         ),
     )
 
@@ -422,6 +426,7 @@ def test_restore_job_runs_restore_and_returns_payload(monkeypatch) -> None:
         "target_volume": "restore-target",
         "path": "/photos/2024",
         "allow_in_place": False,
+        "dry_run": False,
     }
     assert response == {
         "status": "ok",
@@ -430,6 +435,7 @@ def test_restore_job_runs_restore_and_returns_payload(monkeypatch) -> None:
         "target_volume": "restore-target",
         "path": "/photos/2024",
         "allow_in_place": False,
+        "dry_run": False,
     }
 
 
@@ -446,7 +452,7 @@ def test_restore_job_returns_502_when_restore_fails(monkeypatch) -> None:
     monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
     monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
 
-    def _raise(selected, snapshot, target_volume=None, path=None, allow_in_place=False):
+    def _raise(selected, snapshot, target_volume=None, path=None, allow_in_place=False, dry_run=False):
         raise RuntimeError("Fatal: restore failed")
 
     monkeypatch.setattr("dockvault.api.run_restore", _raise)
@@ -476,7 +482,7 @@ def test_restore_job_returns_400_when_restore_request_is_invalid(monkeypatch) ->
     monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
     monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
 
-    def _raise(selected, snapshot, target_volume=None, path=None, allow_in_place=False):
+    def _raise(selected, snapshot, target_volume=None, path=None, allow_in_place=False, dry_run=False):
         raise ValueError("restoring into the source volume requires explicit in-place confirmation")
 
     monkeypatch.setattr("dockvault.api.run_restore", _raise)
@@ -489,6 +495,39 @@ def test_restore_job_returns_400_when_restore_request_is_invalid(monkeypatch) ->
         "code": "invalid_restore_request",
         "message": "restoring into the source volume requires explicit in-place confirmation",
         "name": "alpha",
+    }
+
+
+def test_restore_job_returns_dry_run_output(monkeypatch) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "alpha",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "alpha-volume"},
+            "repository": {"type": "local", "path": "/repo-alpha"},
+        }
+    )
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.api.get_jobs", lambda client: [job])
+    monkeypatch.setattr(
+        "dockvault.api.run_restore",
+        lambda selected, snapshot, target_volume=None, path=None, allow_in_place=False, dry_run=False: {
+            "output": ["would restore /photos/2024/image.jpg"],
+        },
+    )
+
+    response = restore_job("alpha", RestoreRequest(snapshot="latest", dry_run=True))
+
+    assert response == {
+        "status": "ok",
+        "name": "alpha",
+        "snapshot": "latest",
+        "target_volume": "alpha-volume",
+        "path": None,
+        "allow_in_place": False,
+        "dry_run": True,
+        "output": ["would restore /photos/2024/image.jpg"],
     }
 
 

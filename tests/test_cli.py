@@ -203,13 +203,14 @@ def test_restore_uses_remote_mode_when_server_is_configured(monkeypatch) -> None
     monkeypatch.setattr(
         cli_module,
         "restore_remote",
-        lambda server, name, snapshot, target_volume, path, allow_in_place: {
+        lambda server, name, snapshot, target_volume, path, allow_in_place, dry_run: {
             "status": "ok",
             "name": name,
             "snapshot": snapshot,
             "target_volume": target_volume,
             "path": path,
             "allow_in_place": allow_in_place,
+            "dry_run": dry_run,
         },
     )
 
@@ -240,7 +241,7 @@ def test_restore_rejects_in_place_restore_without_confirmation(monkeypatch) -> N
     monkeypatch.setattr(
         cli_module,
         "run_restore",
-        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False: (_ for _ in ()).throw(
+        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False, dry_run=False: (_ for _ in ()).throw(
             ValueError("restoring into the source volume requires explicit in-place confirmation")
         ),
     )
@@ -249,3 +250,27 @@ def test_restore_rejects_in_place_restore_without_confirmation(monkeypatch) -> N
 
     assert result.exit_code == 1
     assert result.stderr == "restoring into the source volume requires explicit in-place confirmation\n"
+
+
+def test_restore_prints_local_dry_run_payload(monkeypatch) -> None:
+    job = object()
+
+    monkeypatch.delenv("DOCKVAULT_SERVER_URL", raising=False)
+    monkeypatch.setattr(cli_module, "_get_jobs_by_name", lambda name: [job])
+    monkeypatch.setattr(
+        cli_module,
+        "run_restore",
+        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False, dry_run=False: {
+            "snapshot": snapshot,
+            "target_volume": target_volume or "alpha-volume",
+            "path": restore_path,
+            "dry_run": dry_run,
+            "output": ["would restore /photos/2024/image.jpg"],
+        },
+    )
+
+    result = CliRunner().invoke(app, ["restore", "alpha", "latest", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert '"dry_run": true' in result.stdout
+    assert '"would restore /photos/2024/image.jpg"' in result.stdout

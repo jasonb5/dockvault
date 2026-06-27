@@ -132,15 +132,34 @@ def restore(
     target_volume: str | None = typer.Argument(None),
     path: str | None = typer.Option(None, "--path"),
     in_place: bool = typer.Option(False, "--in-place", help="Allow restore into the source volume"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview restore without writing data"),
     server: str | None = typer.Option(None, "--server"),
 ) -> None:
     if _server_is_configured(server):
-        _print_remote_payload(restore_remote, server, name, snapshot, target_volume, path, in_place)
+        _print_remote_payload(
+            restore_remote,
+            server,
+            name,
+            snapshot,
+            target_volume,
+            path,
+            in_place,
+            dry_run,
+        )
         return
 
     try:
         for job in _get_jobs_by_name(name):
-            run_restore(job, snapshot, target_volume, path, allow_in_place=in_place)
+            result = run_restore(
+                job,
+                snapshot,
+                target_volume,
+                path,
+                allow_in_place=in_place,
+                dry_run=dry_run,
+            )
+            if dry_run:
+                _print_payload(result)
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc

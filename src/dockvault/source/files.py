@@ -30,7 +30,9 @@ class FilesBackupHandler(BaseBackupSourceHandler):
         repository: str,
         snapshot: str,
         restore_path: str | None = None,
+        dry_run: bool = False,
     ) -> str:
         include_arg = f" --include {shlex.quote(restore_path)}" if restore_path else ""
+        dry_run_arg = " --dry-run" if dry_run else ""
 
-        return f"restic -r {repository} restore {snapshot} --target /restore{include_arg}"
+        return f"restic -r {repository} restore {snapshot} --target /restore{include_arg}{dry_run_arg}"

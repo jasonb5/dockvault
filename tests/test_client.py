@@ -92,10 +92,11 @@ def test_restore_posts_remote_payload(monkeypatch) -> None:
         "restore-target",
         "/photos/2024",
         False,
+        True,
     ) == {"status": "ok"}
     assert seen["url"] == "http://dockvault:8000/jobs/alpha/restore"
     assert seen["body"] == (
-        '{"snapshot": "latest", "target_volume": "restore-target", "path": "/photos/2024", "allow_in_place": false}'
+        '{"snapshot": "latest", "target_volume": "restore-target", "path": "/photos/2024", "allow_in_place": false, "dry_run": true}'
     )
 
 

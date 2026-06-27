@@ -49,6 +49,10 @@ def test_files_backup_handler_builds_expected_command_and_mounts() -> None:
         handler.build_restore_command("/repo", "latest", "/photos/2024/image.jpg")
         == "restic -r /repo restore latest --target /restore --include /photos/2024/image.jpg"
     )
+    assert (
+        handler.build_restore_command("/repo", "latest", dry_run=True)
+        == "restic -r /repo restore latest --target /restore --dry-run"
+    )
 
 
 def test_run_backup_logs_summary(monkeypatch, caplog) -> None:
@@ -420,6 +424,80 @@ def test_validate_restore_request_requires_absolute_path() -> None:
             "restore-volume",
             "photos/2024/image.jpg",
         )
+
+
+def test_validate_restore_request_allows_in_place_dry_run_without_confirmation() -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+
+    assert backup.validate_restore_request(job, "latest", dry_run=True) == (
+        "latest",
+        "media-volume",
+        None,
+    )
+
+
+def test_run_restore_returns_dry_run_output(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    seen = {}
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 0},
+        logs=lambda stdout, stderr: b"would restore /photos/2024/image.jpg\n",
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            seen.update({"volumes": volumes, "command": command, "hostname": hostname})
+
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    source = SimpleNamespace(
+        get_restore_volumes=lambda target=None: {target or "media-volume": {"bind": "/restore", "mode": "rw"}},
+        build_restore_command=lambda repository, snapshot, restore_path=None, dry_run=False: (
+            f"restore {snapshot} to {repository} path={restore_path} dry_run={dry_run}"
+        ),
+    )
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_source_handler", lambda config: source)
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("INFO")
+
+    result = backup.run_restore(job, "latest", dry_run=True)
+
+    assert result == {
+        "snapshot": "latest",
+        "target_volume": "media-volume",
+        "path": None,
+        "dry_run": True,
+        "output": ["would restore /photos/2024/image.jpg"],
+    }
+    assert seen["command"] == ["-c", "timeout 21600s restore latest to /repo path=None dry_run=True"]
+    assert "Restore dry run completed" in caplog.text
 
 
 def test_list_snapshots_for_job_runs_tagged_restic_snapshots(monkeypatch) -> None:

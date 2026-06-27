@@ -96,6 +96,7 @@ def restore(
     target_volume: str | None,
     path: str | None,
     allow_in_place: bool,
+    dry_run: bool,
 ) -> dict:
     return post_json(
         server,
@@ -105,5 +106,6 @@ def restore(
             "target_volume": target_volume,
             "path": path,
             "allow_in_place": allow_in_place,
+            "dry_run": dry_run,
         },
     )

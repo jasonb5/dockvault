@@ -34,6 +34,7 @@ class RestoreRequest(BaseModel):
     target_volume: str | None = None
     path: str | None = None
     allow_in_place: bool = False
+    dry_run: bool = False
 
 
 def _error_detail(code: str, message: str, **extra) -> dict:
@@ -227,12 +228,13 @@ def restore_job(name: str, payload: RestoreRequest, authorization: str | None = 
     job = _get_job_by_name(name)
 
     try:
-        run_restore(
+        restore_result = run_restore(
             job,
             payload.snapshot,
             payload.target_volume,
             payload.path,
             allow_in_place=payload.allow_in_place,
+            dry_run=payload.dry_run,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -254,14 +256,20 @@ def restore_job(name: str, payload: RestoreRequest, authorization: str | None = 
             ),
         ) from exc
 
-    return {
+    response = {
         "status": "ok",
         "name": name,
         "snapshot": payload.snapshot,
         "target_volume": payload.target_volume or job.source.volume_name,
         "path": payload.path,
         "allow_in_place": payload.allow_in_place,
+        "dry_run": payload.dry_run,
     }
+
+    if payload.dry_run:
+        response["output"] = restore_result["output"]
+
+    return response
 
 
 @app.post("/jobs/{name}/backup")

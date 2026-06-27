@@ -131,13 +131,15 @@ def run_restore(
     target_volume: str | None = None,
     restore_path: str | None = None,
     allow_in_place: bool = False,
-) -> None:
+    dry_run: bool = False,
+) -> dict:
     snapshot, restore_target, restore_path = validate_restore_request(
         job,
         snapshot,
         target_volume,
         restore_path,
         allow_in_place=allow_in_place,
+        dry_run=dry_run,
     )
 
     client = _create_docker_client()
@@ -156,9 +158,21 @@ def run_restore(
     logger.info("Starting restore %s", context)
 
     result: ExecResult | None = None
-    cmd = _with_timeout(
-        source.build_restore_command(repository.get_repo_path(), snapshot, restore_path)
-    )
+    if dry_run:
+        restore_command = source.build_restore_command(
+            repository.get_repo_path(),
+            snapshot,
+            restore_path,
+            True,
+        )
+    else:
+        restore_command = source.build_restore_command(
+            repository.get_repo_path(),
+            snapshot,
+            restore_path,
+        )
+
+    cmd = _with_timeout(restore_command)
 
     with repository.launch(volumes, ["-c", cmd]) as container:
         try:
@@ -177,10 +191,26 @@ def run_restore(
             if result is None:
                 logger.error("Restore produced no result %s", context)
             else:
-                report_restore_result(context, result)
+                restore_result = report_restore_result(context, result, dry_run=dry_run)
+                restore_result.update(
+                    {
+                        "snapshot": snapshot,
+                        "target_volume": restore_target,
+                        "path": restore_path,
+                    }
+                )
+                return restore_result
 
     if result is None:
         raise RuntimeError("no result")
+
+    return {
+        "snapshot": snapshot,
+        "target_volume": restore_target,
+        "path": restore_path,
+        "dry_run": dry_run,
+        "output": [],
+    }
 
 
 def validate_restore_request(
@@ -190,6 +220,7 @@ def validate_restore_request(
     restore_path: str | None = None,
     *,
     allow_in_place: bool = False,
+    dry_run: bool = False,
 ) -> tuple[str, str, str | None]:
     normalized_snapshot = snapshot.strip()
 
@@ -209,7 +240,7 @@ def validate_restore_request(
         raise ValueError("use a full restore without --path instead of restoring '/'")
 
     restore_target = normalized_target_volume or job.source.volume_name
-    if restore_target == job.source.volume_name and not allow_in_place:
+    if restore_target == job.source.volume_name and not allow_in_place and not dry_run:
         raise ValueError(
             "restoring into the source volume requires explicit in-place confirmation",
         )
@@ -408,12 +439,16 @@ def _get_jobs_by_name(name: str) -> list[BackupJobConfig]:
     return jobs
 
 
-def report_restore_result(context: str, result: ExecResult) -> None:
+def report_restore_result(context: str, result: ExecResult, *, dry_run: bool = False) -> dict:
     lines = _decode_output_lines(result)
 
     match result.exit_code:
         case 0:
-            logger.info("Restore completed %s", context)
+            if dry_run:
+                logger.info("Restore dry run completed %s", context)
+            else:
+                logger.info("Restore completed %s", context)
+            return {"dry_run": dry_run, "output": lines}
         case code:
             message = _last_output_line(lines)
 

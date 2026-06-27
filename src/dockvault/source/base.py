@@ -14,6 +14,7 @@ class BackupSourceHandler(Protocol):
         repository: str,
         snapshot: str,
         restore_path: str | None = None,
+        dry_run: bool = False,
     ) -> str: ...
 
 
@@ -37,5 +38,6 @@ class BaseBackupSourceHandler:
         repository: str,
         snapshot: str,
         restore_path: str | None = None,
+        dry_run: bool = False,
     ) -> str:
         return ""

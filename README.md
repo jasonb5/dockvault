@@ -130,6 +130,7 @@ uv run dockvault backup create media-nightly --server http://dockvault:8000
 uv run dockvault backup check media-nightly --server http://dockvault:8000
 uv run dockvault restore media-nightly latest --server http://dockvault:8000
 uv run dockvault restore media-nightly latest restore-target --path /photos/2024/image.jpg --server http://dockvault:8000
+uv run dockvault restore media-nightly latest --dry-run
 uv run dockvault restore media-nightly latest --in-place
 uv run dockvault backup list-jobs
 uv run dockvault backup create media-nightly
@@ -154,6 +155,8 @@ Command behavior:
   for a discovered job
 - `dockvault restore <name> <snapshot> [target-volume] --server <url>` triggers
   a restore through a remote Dockvault server
+- `dockvault restore <name> <snapshot> [target-volume] --dry-run` previews the
+  restore and prints the restic output without writing data
 - without `--server`, `dockvault jobs`, `dockvault job`, `dockvault snapshots`,
   `dockvault history`, and `dockvault restore` use local Docker-backed behavior
   by default; if `DOCKVAULT_SERVER_URL` is set they switch to remote mode
@@ -173,6 +176,8 @@ Command behavior:
 - restoring into the original source volume now requires explicit
   `--in-place` confirmation for local CLI usage or `allow_in_place=true` in the
   API payload
+- `--dry-run` can be used without `--in-place` to preview an in-place restore
+  safely
 
 ## API
 
@@ -202,6 +207,8 @@ Endpoints:
 - `POST /jobs/{name}/restore`
   Triggers a restore. Requires bearer auth when `DOCKVAULT_API_TOKEN` is
   configured. Restoring into the source volume requires `allow_in_place=true`.
+  Set `dry_run=true` to preview the restore and receive restic output lines in
+  the response.
 
 `/ready` failure reasons currently include:
 - `scheduler_unavailable`

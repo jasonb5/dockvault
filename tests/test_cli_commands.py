@@ -86,13 +86,14 @@ def test_restore_runs_matching_jobs(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_module,
         "run_restore",
-        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False: captured.update(
+        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False, dry_run=False: captured.update(
             {
                 "job": selected,
                 "snapshot": snapshot,
                 "target_volume": target_volume,
                 "restore_path": restore_path,
                 "allow_in_place": allow_in_place,
+                "dry_run": dry_run,
             }
         ),
     )
@@ -106,6 +107,7 @@ def test_restore_runs_matching_jobs(monkeypatch) -> None:
         "target_volume": "restore-volume",
         "restore_path": None,
         "allow_in_place": False,
+        "dry_run": False,
     }
 
 
@@ -117,13 +119,14 @@ def test_restore_passes_path_option(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_module,
         "run_restore",
-        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False: captured.update(
+        lambda selected, snapshot, target_volume=None, restore_path=None, allow_in_place=False, dry_run=False: captured.update(
             {
                 "job": selected,
                 "snapshot": snapshot,
                 "target_volume": target_volume,
                 "restore_path": restore_path,
                 "allow_in_place": allow_in_place,
+                "dry_run": dry_run,
             }
         ),
     )
@@ -140,6 +143,7 @@ def test_restore_passes_path_option(monkeypatch) -> None:
         "target_volume": "restore-volume",
         "restore_path": "/photos/2024/image.jpg",
         "allow_in_place": False,
+        "dry_run": False,
     }
 
 
