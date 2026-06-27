@@ -1,3 +1,5 @@
+import shlex
+
 from typing import override
 
 from dockvault.source.base import BaseBackupSourceHandler
@@ -23,5 +25,12 @@ class FilesBackupHandler(BaseBackupSourceHandler):
         )
 
     @override
-    def build_restore_command(self, repository: str, snapshot: str) -> str:
-        return f"restic -r {repository} restore {snapshot} --target /restore"
+    def build_restore_command(
+        self,
+        repository: str,
+        snapshot: str,
+        restore_path: str | None = None,
+    ) -> str:
+        include_arg = f" --include {shlex.quote(restore_path)}" if restore_path else ""
+
+        return f"restic -r {repository} restore {snapshot} --target /restore{include_arg}"

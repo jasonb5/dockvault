@@ -4,6 +4,7 @@ import typer
 import uvicorn
 
 from dockvault.commands.backup import app as backup_app
+from dockvault.commands.backup import _get_jobs_by_name, run_restore
 from dockvault.logging import LOGGING_CONFIG, setup_logging
 
 app = typer.Typer(help="dockvault")
@@ -15,6 +16,17 @@ def version() -> None:
 
 
 app.add_typer(backup_app, name="backup")
+
+
+@app.command()
+def restore(
+    name: str,
+    snapshot: str,
+    target_volume: str | None = typer.Argument(None),
+    path: str | None = typer.Option(None, "--path"),
+) -> None:
+    for job in _get_jobs_by_name(name):
+        run_restore(job, snapshot, target_volume, path)
 
 
 @app.command()

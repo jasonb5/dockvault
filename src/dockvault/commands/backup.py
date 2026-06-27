@@ -44,16 +44,6 @@ def create(name: str, hostname: Annotated[str | None, typer.Argument()] = None):
 
 
 @app.command()
-def restore(
-    name: str,
-    snapshot: str,
-    target_volume: Annotated[str | None, typer.Argument()] = None,
-):
-    for job in _get_jobs_by_name(name):
-        run_restore(job, snapshot, target_volume)
-
-
-@app.command()
 def snapshots(name: str) -> None:
     for job in _get_jobs_by_name(name):
         print(json.dumps(list_snapshots_for_job(job)))
@@ -103,19 +93,28 @@ def run_restore(
     job: BackupJobConfig,
     snapshot: str,
     target_volume: str | None = None,
+    restore_path: str | None = None,
 ) -> None:
     client = _create_docker_client()
 
     source = create_source_handler(job.source)
     repository = create_repository_handler(job.repository, client)
     restore_target = target_volume or job.source.volume_name
-    context = _restore_context(job, repository.get_repo_path(), snapshot, restore_target)
+    context = _restore_context(
+        job,
+        repository.get_repo_path(),
+        snapshot,
+        restore_target,
+        restore_path,
+    )
 
     volumes = source.get_restore_volumes(target_volume)
     logger.info("Starting restore %s", context)
 
     result: ExecResult | None = None
-    cmd = _with_timeout(source.build_restore_command(repository.get_repo_path(), snapshot))
+    cmd = _with_timeout(
+        source.build_restore_command(repository.get_repo_path(), snapshot, restore_path)
+    )
 
     with repository.launch(volumes, ["-c", cmd]) as container:
         try:
@@ -280,9 +279,12 @@ def _restore_context(
     repository_path: str,
     snapshot: str,
     target_volume: str,
+    restore_path: str | None = None,
 ) -> str:
+    path_context = f" path={restore_path}" if restore_path else ""
+
     return (
-        f"job={job.name} snapshot={snapshot} target_volume={target_volume} "
+        f"job={job.name} snapshot={snapshot} target_volume={target_volume}{path_context} "
         f"repo={repository_path}"
     )
 

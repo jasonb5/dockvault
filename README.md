@@ -113,8 +113,9 @@ uv run dockvault backup create media-nightly
 uv run dockvault backup create media-nightly custom-hostname
 uv run dockvault backup snapshots media-nightly
 uv run dockvault backup check media-nightly
-uv run dockvault backup restore media-nightly latest
-uv run dockvault backup restore media-nightly latest restore-target
+uv run dockvault restore media-nightly latest
+uv run dockvault restore media-nightly latest restore-target
+uv run dockvault restore media-nightly latest restore-target --path /photos/2024/image.jpg
 ```
 
 Command behavior:
@@ -123,9 +124,11 @@ Command behavior:
 - `dockvault backup create <name> [hostname]` runs matching jobs immediately
 - `dockvault backup snapshots <name>` prints matching job snapshots as JSON
 - `dockvault backup check <name>` runs `restic check` for matching job repositories
-- `dockvault backup restore <name> <snapshot> [target-volume]` restores a
+- `dockvault restore <name> <snapshot> [target-volume]` restores a
   snapshot into the job's source volume by default, or into an override volume
   when `target-volume` is provided
+- `dockvault restore <name> <snapshot> [target-volume] --path <path>` restores
+  only the matching path from the snapshot into the selected target volume
 
 ## API
 

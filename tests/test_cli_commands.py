@@ -39,31 +39,64 @@ def test_backup_create_runs_matching_jobs(monkeypatch) -> None:
     assert captured == {"job": job, "hostname": "charon"}
 
 
-def test_backup_restore_runs_matching_jobs(monkeypatch) -> None:
+def test_restore_runs_matching_jobs(monkeypatch) -> None:
     job = object()
     captured = {}
 
-    monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
-    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [job])
+    monkeypatch.setattr(cli_module, "_get_jobs_by_name", lambda name: [job])
     monkeypatch.setattr(
-        backup_module,
+        cli_module,
         "run_restore",
-        lambda selected, snapshot, target_volume=None: captured.update(
+        lambda selected, snapshot, target_volume=None, restore_path=None: captured.update(
             {
                 "job": selected,
                 "snapshot": snapshot,
                 "target_volume": target_volume,
+                "restore_path": restore_path,
             }
         ),
     )
 
-    result = CliRunner().invoke(app, ["backup", "restore", "alpha", "latest", "restore-volume"])
+    result = CliRunner().invoke(app, ["restore", "alpha", "latest", "restore-volume"])
 
     assert result.exit_code == 0
     assert captured == {
         "job": job,
         "snapshot": "latest",
         "target_volume": "restore-volume",
+        "restore_path": None,
+    }
+
+
+def test_restore_passes_path_option(monkeypatch) -> None:
+    job = object()
+    captured = {}
+
+    monkeypatch.setattr(cli_module, "_get_jobs_by_name", lambda name: [job])
+    monkeypatch.setattr(
+        cli_module,
+        "run_restore",
+        lambda selected, snapshot, target_volume=None, restore_path=None: captured.update(
+            {
+                "job": selected,
+                "snapshot": snapshot,
+                "target_volume": target_volume,
+                "restore_path": restore_path,
+            }
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["restore", "alpha", "latest", "restore-volume", "--path", "/photos/2024/image.jpg"],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "job": job,
+        "snapshot": "latest",
+        "target_volume": "restore-volume",
+        "restore_path": "/photos/2024/image.jpg",
     }
 
 
