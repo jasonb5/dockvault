@@ -197,7 +197,11 @@ def test_get_job_returns_404_when_job_is_missing(monkeypatch) -> None:
         )
 
     assert excinfo.value.status_code == 404
-    assert excinfo.value.detail == "job_not_found"
+    assert excinfo.value.detail == {
+        "code": "job_not_found",
+        "message": "No discovered job found with name 'missing'",
+        "name": "missing",
+    }
 
 
 def test_list_jobs_returns_503_when_docker_is_unavailable(monkeypatch) -> None:
@@ -212,7 +216,34 @@ def test_list_jobs_returns_503_when_docker_is_unavailable(monkeypatch) -> None:
         list_jobs(SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(scheduler=scheduler))))
 
     assert excinfo.value.status_code == 503
-    assert excinfo.value.detail == "docker_unavailable"
+    assert excinfo.value.detail == {
+        "code": "docker_unavailable",
+        "message": "Docker is unavailable for job discovery",
+        "error": "docker down",
+    }
+
+
+def test_list_jobs_returns_503_when_job_discovery_fails(monkeypatch) -> None:
+    from dockvault.docker import JobDiscoveryError
+
+    scheduler = SimpleNamespace(get_job=lambda job_id: None)
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+
+    def _raise(client):
+        raise JobDiscoveryError("failed to list docker volumes")
+
+    monkeypatch.setattr("dockvault.api.get_jobs", _raise)
+
+    with pytest.raises(HTTPException, match="503") as excinfo:
+        list_jobs(SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(scheduler=scheduler))))
+
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.detail == {
+        "code": "job_discovery_failed",
+        "message": "Job discovery failed",
+        "error": "failed to list docker volumes",
+    }
 
 
 def test_get_job_snapshots_returns_snapshot_list(monkeypatch) -> None:
@@ -259,7 +290,12 @@ def test_get_job_snapshots_returns_502_when_snapshot_lookup_fails(monkeypatch) -
         get_job_snapshots("alpha")
 
     assert excinfo.value.status_code == 502
-    assert excinfo.value.detail == "snapshot_lookup_failed"
+    assert excinfo.value.detail == {
+        "code": "snapshot_lookup_failed",
+        "message": "Snapshot lookup failed for job 'alpha'",
+        "name": "alpha",
+        "error": "restic failed",
+    }
 
 
 def test_get_job_history_returns_recent_runs(monkeypatch) -> None:

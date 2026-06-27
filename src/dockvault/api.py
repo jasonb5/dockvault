@@ -27,6 +27,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+def _error_detail(code: str, message: str, **extra) -> dict:
+    return {"code": code, "message": message, **extra}
+
+
 def _isoformat_utc(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -71,12 +75,26 @@ def _discover_jobs() -> list[BackupJobConfig]:
     try:
         client = create_docker_client()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="docker_unavailable") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=_error_detail(
+                "docker_unavailable",
+                "Docker is unavailable for job discovery",
+                error=str(exc),
+            ),
+        ) from exc
 
     try:
         return list(get_jobs(client))
     except JobDiscoveryError as exc:
-        raise HTTPException(status_code=503, detail="job_discovery_failed") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=_error_detail(
+                "job_discovery_failed",
+                "Job discovery failed",
+                error=str(exc),
+            ),
+        ) from exc
 
 
 def _get_job_by_name(name: str) -> BackupJobConfig:
@@ -84,7 +102,14 @@ def _get_job_by_name(name: str) -> BackupJobConfig:
         if job.name == name:
             return job
 
-    raise HTTPException(status_code=404, detail="job_not_found")
+    raise HTTPException(
+        status_code=404,
+        detail=_error_detail(
+            "job_not_found",
+            f"No discovered job found with name '{name}'",
+            name=name,
+        ),
+    )
 
 
 def _readiness_payload(app: FastAPI) -> tuple[dict[str, str], int]:
@@ -142,7 +167,15 @@ def get_job_snapshots(name: str) -> dict[str, list[dict]]:
     try:
         snapshots = list_snapshots_for_job(job)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail="snapshot_lookup_failed") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=_error_detail(
+                "snapshot_lookup_failed",
+                f"Snapshot lookup failed for job '{name}'",
+                name=name,
+                error=str(exc),
+            ),
+        ) from exc
 
     return {"snapshots": snapshots}
 

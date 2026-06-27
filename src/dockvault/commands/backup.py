@@ -307,7 +307,17 @@ def _get_jobs_by_name(name: str) -> list[BackupJobConfig]:
     client = _create_docker_client()
     labels = [f"dockvault.name={name}"]
 
-    return list(get_jobs(client, labels))
+    jobs = list(get_jobs(client, labels))
+
+    if not jobs:
+        typer.echo(f"No job found with name '{name}'", err=True)
+        raise typer.Exit(code=1)
+
+    if len(jobs) > 1:
+        typer.echo(f"Multiple jobs found with name '{name}'", err=True)
+        raise typer.Exit(code=1)
+
+    return jobs
 
 
 def report_restore_result(context: str, result: ExecResult) -> None:

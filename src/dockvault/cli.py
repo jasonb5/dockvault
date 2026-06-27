@@ -1,10 +1,12 @@
 from importlib.metadata import version as package_version
+import os
 
 import typer
 import uvicorn
 
 from dockvault.commands.backup import app as backup_app
 from dockvault.commands.backup import _get_jobs_by_name, run_restore
+from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
 from dockvault.logging import LOGGING_CONFIG, setup_logging
 
 app = typer.Typer(help="dockvault")
@@ -27,6 +29,47 @@ def restore(
 ) -> None:
     for job in _get_jobs_by_name(name):
         run_restore(job, snapshot, target_volume, path)
+
+
+@app.command()
+def doctor() -> None:
+    failures: list[str] = []
+
+    try:
+        client = create_docker_client()
+        typer.echo("[ok] docker reachable")
+    except Exception as exc:
+        typer.echo(f"[fail] docker unreachable: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        jobs = list(get_jobs(client))
+        typer.echo(f"[ok] discovered jobs: {len(jobs)}")
+    except JobDiscoveryError as exc:
+        typer.echo(f"[fail] job discovery failed: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    for job in jobs:
+        password_env = job.repository.password_env
+        if os.getenv(password_env):
+            typer.echo(f"[ok] job={job.name} password env present: {password_env}")
+        else:
+            failures.append(f"job={job.name} missing password env: {password_env}")
+
+        repository_path = job.repository.path
+        if os.path.exists(repository_path):
+            typer.echo(f"[ok] job={job.name} repository path exists: {repository_path}")
+        else:
+            failures.append(
+                f"job={job.name} repository path missing in container: {repository_path}"
+            )
+
+    if failures:
+        for failure in failures:
+            typer.echo(f"[fail] {failure}")
+        raise typer.Exit(code=1)
+
+    typer.echo("Doctor checks passed")
 
 
 @app.command()

@@ -108,6 +108,7 @@ Common commands:
 ```bash
 uv run dockvault version
 uv run dockvault server
+uv run dockvault doctor
 uv run dockvault backup list-jobs
 uv run dockvault backup create media-nightly
 uv run dockvault backup create media-nightly custom-hostname
@@ -120,6 +121,8 @@ uv run dockvault restore media-nightly latest restore-target --path /photos/2024
 
 Command behavior:
 - `dockvault server` starts the API and scheduler on `0.0.0.0:8000`
+- `dockvault doctor` verifies Docker access, discovered jobs, required password
+  environment variables, and repository path mounts inside the container
 - `dockvault backup list-jobs` prints discovered job names
 - `dockvault backup create <name> [hostname]` runs matching jobs immediately
 - `dockvault backup snapshots <name>` prints matching job snapshots as JSON

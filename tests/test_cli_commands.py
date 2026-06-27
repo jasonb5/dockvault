@@ -39,6 +39,26 @@ def test_backup_create_runs_matching_jobs(monkeypatch) -> None:
     assert captured == {"job": job, "hostname": "charon"}
 
 
+def test_backup_create_fails_when_no_jobs_match(monkeypatch) -> None:
+    monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [])
+
+    result = CliRunner().invoke(app, ["backup", "create", "missing"])
+
+    assert result.exit_code == 1
+    assert result.output == "No job found with name 'missing'\n"
+
+
+def test_backup_create_fails_when_multiple_jobs_match(monkeypatch) -> None:
+    monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [object(), object()])
+
+    result = CliRunner().invoke(app, ["backup", "create", "duplicate"])
+
+    assert result.exit_code == 1
+    assert result.output == "Multiple jobs found with name 'duplicate'\n"
+
+
 def test_restore_runs_matching_jobs(monkeypatch) -> None:
     job = object()
     captured = {}
@@ -98,6 +118,27 @@ def test_restore_passes_path_option(monkeypatch) -> None:
         "target_volume": "restore-volume",
         "restore_path": "/photos/2024/image.jpg",
     }
+
+
+def test_restore_fails_when_no_jobs_match(monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "_get_jobs_by_name", backup_module._get_jobs_by_name)
+    monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [])
+
+    result = CliRunner().invoke(app, ["restore", "missing", "latest"])
+
+    assert result.exit_code == 1
+    assert result.output == "No job found with name 'missing'\n"
+
+
+def test_backup_snapshots_fails_when_multiple_jobs_match(monkeypatch) -> None:
+    monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [object(), object()])
+
+    result = CliRunner().invoke(app, ["backup", "snapshots", "duplicate"])
+
+    assert result.exit_code == 1
+    assert result.output == "Multiple jobs found with name 'duplicate'\n"
 
 
 def test_backup_snapshots_prints_snapshot_json(monkeypatch) -> None:
