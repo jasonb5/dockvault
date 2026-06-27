@@ -415,6 +415,89 @@ def test_list_snapshots_for_job_raises_on_restic_failure(monkeypatch, caplog) ->
     assert "Snapshot lookup failed" in caplog.text
 
 
+def test_run_check_runs_restic_check(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    seen = {}
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 0},
+        logs=lambda stdout, stderr: b"check completed\n",
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            seen.update({"volumes": volumes, "command": command, "hostname": hostname})
+
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("INFO")
+
+    backup.run_check(job)
+
+    assert seen["volumes"] is None
+    assert seen["hostname"] is None
+    assert seen["command"] == ["-c", "timeout 21600s restic -r /repo check"]
+    assert "Repository check completed" in caplog.text
+
+
+def test_run_check_raises_on_failure(monkeypatch, caplog) -> None:
+    job = BackupJobConfig.model_validate(
+        {
+            "name": "media",
+            "schedule": "0 1 * * *",
+            "source": {"type": "files", "volume_name": "media-volume"},
+            "repository": {"type": "local", "path": "/repo"},
+        }
+    )
+    container = SimpleNamespace(
+        wait=lambda: {"StatusCode": 3},
+        logs=lambda stdout, stderr: b"first line\nFatal: repository is locked\n",
+    )
+
+    class FakeRepository:
+        def launch(self, volumes, command, hostname=None):
+            class Context:
+                def __enter__(self_inner):
+                    return container
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return Context()
+
+        def get_repo_path(self) -> str:
+            return "/repo"
+
+    monkeypatch.setattr(backup, "_create_docker_client", lambda: object())
+    monkeypatch.setattr(backup, "create_repository_handler", lambda config, client: FakeRepository())
+
+    caplog.set_level("WARNING")
+
+    with pytest.raises(RuntimeError, match="Fatal: repository is locked"):
+        backup.run_check(job)
+
+    assert "Repository check failed" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # C2: run_backup must surface failures rather than swallow / crash on them.
 #

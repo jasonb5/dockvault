@@ -67,6 +67,35 @@ def test_backup_restore_runs_matching_jobs(monkeypatch) -> None:
     }
 
 
+def test_backup_snapshots_prints_snapshot_json(monkeypatch) -> None:
+    job = object()
+
+    monkeypatch.setattr(backup_module, "_get_jobs_by_name", lambda name: [job])
+    monkeypatch.setattr(
+        backup_module,
+        "list_snapshots_for_job",
+        lambda selected: [{"id": "abc123", "time": "2026-06-27T01:00:00Z"}],
+    )
+
+    result = CliRunner().invoke(app, ["backup", "snapshots", "alpha"])
+
+    assert result.exit_code == 0
+    assert result.stdout == '[{"id": "abc123", "time": "2026-06-27T01:00:00Z"}]\n'
+
+
+def test_backup_check_runs_matching_jobs(monkeypatch) -> None:
+    job = object()
+    captured = {}
+
+    monkeypatch.setattr(backup_module, "_get_jobs_by_name", lambda name: [job])
+    monkeypatch.setattr(backup_module, "run_check", lambda selected: captured.update({"job": selected}))
+
+    result = CliRunner().invoke(app, ["backup", "check", "alpha"])
+
+    assert result.exit_code == 0
+    assert captured == {"job": job}
+
+
 def test_server_command_configures_uvicorn(monkeypatch) -> None:
     captured = {}
 

@@ -39,15 +39,7 @@ def list_jobs():
 
 @app.command()
 def create(name: str, hostname: Annotated[str | None, typer.Argument()] = None):
-    client = _create_docker_client()
-
-    labels = [
-        f"dockvault.name={name}",
-    ]
-
-    jobs = get_jobs(client, labels)
-
-    for job in jobs:
+    for job in _get_jobs_by_name(name):
         run_backup(job, hostname)
 
 
@@ -57,16 +49,20 @@ def restore(
     snapshot: str,
     target_volume: Annotated[str | None, typer.Argument()] = None,
 ):
-    client = _create_docker_client()
-
-    labels = [
-        f"dockvault.name={name}",
-    ]
-
-    jobs = get_jobs(client, labels)
-
-    for job in jobs:
+    for job in _get_jobs_by_name(name):
         run_restore(job, snapshot, target_volume)
+
+
+@app.command()
+def snapshots(name: str) -> None:
+    for job in _get_jobs_by_name(name):
+        print(json.dumps(list_snapshots_for_job(job)))
+
+
+@app.command()
+def check(name: str) -> None:
+    for job in _get_jobs_by_name(name):
+        run_check(job)
 
 
 def run_backup(job: BackupJobConfig, hostname: str | None = None) -> None:
@@ -187,6 +183,33 @@ def list_snapshots_for_job(job: BackupJobConfig) -> list[dict]:
     return sorted(snapshots, key=lambda snapshot: snapshot.get("time") or "", reverse=True)
 
 
+def run_check(job: BackupJobConfig) -> None:
+    client = _create_docker_client()
+    repository = create_repository_handler(job.repository, client)
+    context = _job_context(job, repository.get_repo_path())
+    command = _with_timeout_command(["restic", "-r", repository.get_repo_path(), "check"])
+
+    with repository.launch(None, ["-c", command]) as container:
+        status = cast(dict[str, int], container.wait())
+        result = cast(
+            ExecResult,
+            SimpleNamespace(
+                output=container.logs(stdout=True, stderr=True),
+                exit_code=status["StatusCode"],
+            ),
+        )
+
+    lines = _decode_output_lines(result)
+
+    if result.exit_code == 0:
+        logger.info("Repository check completed %s", context)
+        return
+
+    message = _last_output_line(lines) or "unknown error"
+    logger.warning("Repository check failed %s error=%s", context, message)
+    raise RuntimeError(message)
+
+
 def report_result(
     job: BackupJobConfig,
     context: str,
@@ -276,6 +299,13 @@ def _create_docker_client() -> DockerClient:
     from dockvault.docker import create_docker_client
 
     return create_docker_client()
+
+
+def _get_jobs_by_name(name: str) -> list[BackupJobConfig]:
+    client = _create_docker_client()
+    labels = [f"dockvault.name={name}"]
+
+    return list(get_jobs(client, labels))
 
 
 def report_restore_result(context: str, result: ExecResult) -> None:
