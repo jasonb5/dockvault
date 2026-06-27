@@ -130,6 +130,11 @@ Endpoints:
   Returns `200` with `{"status":"ok"}` when the process is alive.
 - `GET /ready`
   Returns readiness based on scheduler state and Docker job discovery.
+- `GET /jobs`
+  Returns discovered backup jobs with source, repository, schedule, and next
+  scheduled run time when the job is currently present in the scheduler.
+- `GET /jobs/{name}`
+  Returns one discovered backup job by name.
 
 `/ready` failure reasons currently include:
 - `scheduler_unavailable`
@@ -143,6 +148,8 @@ Run locally:
 uv run dockvault server
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/ready
+curl http://127.0.0.1:8000/jobs
+curl http://127.0.0.1:8000/jobs/media-nightly
 ```
 
 ## Local Development
