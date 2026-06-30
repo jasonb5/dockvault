@@ -21,9 +21,20 @@ from dockvault.config import render_scaffold_config
 from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs, list_volumes
 from dockvault.history import get_backup_history, get_last_backup_run
 from dockvault.logging import LOGGING_CONFIG, setup_logging
+from dockvault.runtime import get_server_url_override, reset_server_url_override, set_server_url_override
 
 app = typer.Typer(help="dockvault")
 config_app = typer.Typer(help="config helpers")
+
+
+@app.callback()
+def main_options(
+    ctx: typer.Context,
+    server: str | None = typer.Option(None, "--server"),
+) -> None:
+    if server is not None and server.strip():
+        token = set_server_url_override(server.strip())
+        ctx.call_on_close(lambda: reset_server_url_override(token))
 
 
 @app.command()
@@ -42,7 +53,7 @@ def _print_remote_payload(fetcher, server: str | None, *args: str) -> None:
 
 
 def _server_is_configured(server: str | None) -> bool:
-    return bool(server or os.getenv("DOCKVAULT_SERVER_URL"))
+    return bool(server or get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"))
 
 
 def _isoformat_utc(value: datetime | None) -> str | None:

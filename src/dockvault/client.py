@@ -4,13 +4,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from dockvault.runtime import get_server_url_override
+
 
 class DockvaultClientError(RuntimeError):
     pass
 
 
 def resolve_server_url(server: str | None) -> str:
-    value = server or os.getenv("DOCKVAULT_SERVER_URL")
+    value = server or get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL")
 
     if value is None or not value.strip():
         raise DockvaultClientError(

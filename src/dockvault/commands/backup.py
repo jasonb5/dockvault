@@ -22,6 +22,7 @@ from dockvault.models.restic import (
     ResticSummary,
 )
 from dockvault.repository.factory import create_repository_handler
+from dockvault.runtime import get_server_url_override
 from dockvault.source.factory import create_source_handler
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ def create(
     name: str,
     server: str | None = typer.Option(None, "--server"),
 ):
-    if server or os.getenv("DOCKVAULT_SERVER_URL"):
+    if server or get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"):
         try:
             payload = trigger_remote_backup(server, name)
         except DockvaultClientError as exc:
@@ -67,7 +68,7 @@ def snapshots(name: str) -> None:
 
 @app.command()
 def check(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    if server or os.getenv("DOCKVAULT_SERVER_URL"):
+    if server or get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"):
         try:
             payload = trigger_remote_check(server, name)
         except DockvaultClientError as exc:

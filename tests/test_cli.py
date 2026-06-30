@@ -81,6 +81,15 @@ def test_jobs_fetches_remote_payload(monkeypatch) -> None:
     assert result.stdout == '{\n  "jobs": [\n    {\n      "name": "alpha"\n    }\n  ]\n}\n'
 
 
+def test_jobs_accepts_top_level_server_option(monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "get_remote_jobs", lambda server: {"jobs": [{"name": "alpha"}]})
+
+    result = CliRunner().invoke(app, ["--server", "http://dockvault:8000", "jobs"])
+
+    assert result.exit_code == 0
+    assert '"name": "alpha"' in result.stdout
+
+
 def test_jobs_uses_local_discovery_by_default(monkeypatch) -> None:
     job = SimpleNamespace(
         name="alpha",
@@ -257,6 +266,22 @@ def test_config_scaffold_uses_remote_mode(monkeypatch) -> None:
     result = CliRunner().invoke(
         app,
         ["config", "scaffold", "--server", "http://dockvault:8000"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "jobs:\n  alpha: {}\n"
+
+
+def test_config_scaffold_accepts_top_level_server_option(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "get_remote_config_scaffold",
+        lambda server, schedule, repository_root, source_type, repository_type, repository_password_env, retention_keep_last, retention_keep_daily, retention_keep_weekly, retention_keep_monthly, retention_keep_yearly: {"config": "jobs:\n  alpha: {}\n"},
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["--server", "http://dockvault:8000", "config", "scaffold"],
     )
 
     assert result.exit_code == 0
