@@ -198,7 +198,7 @@ def test_get_config_scaffold_returns_generated_yaml(monkeypatch) -> None:
     assert "defaults:" in response["config"]
     assert "alpha_data:" in response["config"]
     assert "schedule: 0 2 * * *" in response["config"]
-    assert "path: /backup/root/alpha_data" in response["config"]
+    assert "path: /backup/root" in response["config"]
 
 
 def test_get_config_scaffold_applies_override_defaults(monkeypatch) -> None:

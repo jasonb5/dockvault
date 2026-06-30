@@ -235,7 +235,7 @@ Command behavior:
 - `dockvault doctor` verifies Docker access, discovered jobs, required password
   environment variables, and repository path mounts inside the container
 - `dockvault config scaffold` prints a starter YAML config for all current
-  Docker volumes using the selected schedule and repository root
+  Docker volumes using the selected schedule and a shared repository path
 - scaffold generation also accepts override flags for generated defaults such
   as `--source-type`, `--repository-type`, `--repository-password-env`, and
   `--retention-keep-*`

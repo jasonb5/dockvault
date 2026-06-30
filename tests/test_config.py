@@ -4,6 +4,7 @@ import pytest
 
 from dockvault.config import (
     ExternalConfigError,
+    build_scaffold_config,
     load_external_job_configs,
     load_server_default_job_config,
     matches_label_filters,
@@ -96,3 +97,27 @@ def test_load_server_default_job_config_reads_shared_defaults(monkeypatch) -> No
             "keep_daily": "14",
         },
     }
+
+
+def test_build_scaffold_config_keeps_label_repository_path_override() -> None:
+    volume = type(
+        "Volume",
+        (),
+        {
+            "name": "alpha_data",
+            "attrs": {
+                "Labels": {
+                    "dockvault.repository.path": "/custom/repo",
+                }
+            },
+        },
+    )()
+
+    config = build_scaffold_config(
+        [volume],
+        schedule="0 1 * * *",
+        repository_root="/shared/repo",
+    )
+
+    assert config["defaults"]["repository"]["path"] == "/shared/repo"
+    assert config["jobs"]["alpha_data"]["repository"] == {"path": "/custom/repo"}

@@ -214,7 +214,7 @@ def test_config_scaffold_uses_local_volume_discovery(monkeypatch) -> None:
     assert "defaults:" in result.stdout
     assert "alpha_data:" in result.stdout
     assert 'schedule: 0 2 * * *' in result.stdout
-    assert 'path: /srv/restic/alpha_data' in result.stdout
+    assert 'path: /srv/restic' in result.stdout
 
 
 def test_config_scaffold_applies_override_defaults(monkeypatch) -> None:
@@ -245,6 +245,7 @@ def test_config_scaffold_applies_override_defaults(monkeypatch) -> None:
     assert result.exit_code == 0
     assert 'password_env: ALT_PASSWORD' in result.stdout
     assert 'keep_weekly: 8' in result.stdout
+    assert 'path: /srv/restic' in result.stdout
 
 
 def test_config_scaffold_uses_remote_mode(monkeypatch) -> None:

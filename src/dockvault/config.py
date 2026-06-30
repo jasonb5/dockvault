@@ -105,6 +105,7 @@ def build_scaffold_config(
         },
         "repository": {
             "type": str(repository_defaults.get("type", "local")),
+            "path": repository_root,
             "password_env": str(repository_defaults.get("password_env", "RESTIC_PASSWORD")),
         },
     }
@@ -112,7 +113,6 @@ def build_scaffold_config(
         defaults["retention"] = copy.deepcopy(retention_defaults)
 
     jobs: dict[str, Any] = {}
-    normalized_repository_root = repository_root.rstrip("/") or "/"
 
     for volume in sorted(volumes, key=lambda item: item.name):
         labels = volume.attrs.get("Labels") or {}
@@ -127,13 +127,12 @@ def build_scaffold_config(
                 "volume_name": volume.name,
             },
             "schedule": str(label_config.get("schedule") or schedule),
-            "repository": {
-                "path": str(
-                    repository_config.get("path")
-                    or _join_repository_path(normalized_repository_root, volume.name)
-                ),
-            },
         }
+
+        job_repository: dict[str, Any] = {}
+        repository_path = repository_config.get("path")
+        if repository_path not in (None, defaults["repository"]["path"]):
+            job_repository["path"] = str(repository_path)
 
         if source_config.get("type") not in (None, defaults["source"]["type"]):
             job["source"]["type"] = str(source_config["type"])
@@ -141,7 +140,10 @@ def build_scaffold_config(
         for key in ("type", "password_env"):
             value = repository_config.get(key)
             if value not in (None, defaults["repository"][key]):
-                job["repository"][key] = str(value)
+                job_repository[key] = str(value)
+
+        if job_repository:
+            job["repository"] = job_repository
 
         if retention_config:
             job["retention"] = copy.deepcopy(retention_config)
@@ -283,15 +285,6 @@ def _get_env_value(name: str) -> str | None:
         return None
 
     return normalized
-
-
-def _join_repository_path(root: str, volume_name: str) -> str:
-    if root == "/":
-        return f"/{volume_name}"
-
-    return f"{root}/{volume_name}"
-
-
 def matches_label_filters(
     config: dict[str, Any],
     filters: list[str],
