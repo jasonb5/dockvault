@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from dockvault.docker import create_docker_client, get_jobs
 
 
@@ -38,19 +40,159 @@ def test_get_jobs_adds_enabled_filter_and_builds_job_configs() -> None:
             captured_filters.update(filters)
             return [volume_with_name, volume_without_name]
 
+        def get(self, name):
+            raise AssertionError(f"unexpected get({name})")
+
     labels = ["dockvault.name=nightly"]
     jobs = list(get_jobs(FakeClient(), labels))
 
-    assert captured_filters == {
-        "label": ["dockvault.name=nightly", "dockvault.enabled"],
-    }
-    assert labels == ["dockvault.name=nightly", "dockvault.enabled"]
+    assert captured_filters == {"label": ["dockvault.enabled"]}
+    assert labels == ["dockvault.name=nightly"]
 
-    assert [job.name for job in jobs] == ["nightly", "volume-b"]
+    assert [job.name for job in jobs] == ["nightly"]
     assert jobs[0].source.volume_name == "volume-a"
-    assert jobs[1].source.volume_name == "volume-b"
     assert jobs[0].repository.path == "/repo-a"
-    assert jobs[1].repository.path == "/repo-b"
+
+
+def test_get_jobs_uses_external_config_for_existing_unlabeled_volume(
+    tmp_path, monkeypatch
+) -> None:
+    config_path = tmp_path / "dockvault.yaml"
+    config_path.write_text(
+        """
+jobs:
+  media:
+    source:
+      type: files
+      volume_name: media_data
+    schedule: "0 1 * * *"
+    repository:
+      type: local
+      path: /srv/restic/media
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DOCKVAULT_CONFIG_PATH", str(config_path))
+
+    volume = SimpleNamespace(name="media_data", attrs={"Labels": {}})
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.volumes = self
+
+        def list(self, filters):
+            return []
+
+        def get(self, name):
+            assert name == "media_data"
+            return volume
+
+    jobs = list(get_jobs(FakeClient()))
+
+    assert len(jobs) == 1
+    assert jobs[0].name == "media"
+    assert jobs[0].source.volume_name == "media_data"
+    assert jobs[0].repository.path == "/srv/restic/media"
+
+
+def test_get_jobs_external_config_overrides_labels(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "dockvault.yaml"
+    config_path.write_text(
+        """
+defaults:
+  repository:
+    type: local
+    password_env: SHARED_PASSWORD
+jobs:
+  media-override:
+    source:
+      type: files
+      volume_name: media_data
+    schedule: "0 3 * * *"
+    repository:
+      path: /srv/restic/override
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DOCKVAULT_CONFIG_PATH", str(config_path))
+
+    volume = SimpleNamespace(
+        name="media_data",
+        attrs={
+            "Labels": {
+                "dockvault.enabled": "true",
+                "dockvault.name": "media-label",
+                "dockvault.schedule": "0 1 * * *",
+                "dockvault.source.type": "files",
+                "dockvault.repository.type": "local",
+                "dockvault.repository.path": "/srv/restic/label",
+                "dockvault.repository.password_env": "LABEL_PASSWORD",
+            }
+        },
+    )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.volumes = self
+
+        def list(self, filters):
+            return [volume]
+
+        def get(self, name):
+            raise AssertionError(f"unexpected get({name})")
+
+    jobs = list(get_jobs(FakeClient()))
+
+    assert len(jobs) == 1
+    assert jobs[0].name == "media-override"
+    assert jobs[0].schedule == "0 3 * * *"
+    assert jobs[0].repository.path == "/srv/restic/override"
+    assert jobs[0].repository.password_env == "SHARED_PASSWORD"
+
+
+def test_get_jobs_skips_external_job_when_volume_is_missing(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    config_path = tmp_path / "dockvault.yaml"
+    config_path.write_text(
+        """
+jobs:
+  media:
+    source:
+      type: files
+      volume_name: missing_volume
+    schedule: "0 1 * * *"
+    repository:
+      type: local
+      path: /srv/restic/media
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DOCKVAULT_CONFIG_PATH", str(config_path))
+    caplog.set_level("WARNING")
+
+    class NotFound(Exception):
+        pass
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.volumes = self
+
+        def list(self, filters):
+            return []
+
+        def get(self, name):
+            raise NotFound(name)
+
+    monkeypatch.setattr("dockvault.docker.NotFound", NotFound)
+
+    jobs = list(get_jobs(FakeClient()))
+
+    assert jobs == []
+    assert "Configured external job volume not found missing_volume" in caplog.text
 
 
 def test_create_docker_client_sets_timeout(monkeypatch) -> None:

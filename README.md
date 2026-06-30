@@ -1,7 +1,7 @@
 # dockvault
 
-Dockvault discovers backup jobs from Docker volume labels and runs `restic`
-backups for them on a schedule.
+Dockvault discovers backup jobs from Docker volume labels and optional
+server-side config, then runs `restic` backups for them on a schedule.
 
 Today the project supports:
 - Source type: `files`
@@ -11,8 +11,8 @@ Today the project supports:
 
 ## How It Works
 
-Dockvault watches Docker volumes for labels prefixed with `dockvault.`.
-Every matching volume becomes a backup job.
+Dockvault watches Docker volumes for labels prefixed with `dockvault.` and can
+also load retrofit job config from a server-side YAML file.
 
 The server process:
 - starts a FastAPI app on port `8000`
@@ -36,7 +36,13 @@ configured, Dockvault uses the machine hostname.
 
 ## Job Configuration
 
-Jobs are configured entirely with Docker volume labels.
+Jobs can be configured in two ways:
+
+1. Docker volume labels
+2. A server-side YAML file referenced by `DOCKVAULT_CONFIG_PATH`
+
+When both are present for the same volume, external config wins for overlapping
+fields.
 
 Required labels:
 - `dockvault.enabled`
@@ -66,6 +72,66 @@ docker volume create \
   media
 ```
 
+### External Config For Existing Volumes
+
+Use `DOCKVAULT_CONFIG_PATH` when you need to onboard existing volumes without
+recreating or relabeling them.
+
+- the config file is read by the Dockvault server process
+- each job must point at an existing Docker volume with `source.volume_name`
+- the real Docker volume remains the backup source identity
+- top-level `defaults` can hold shared policy to keep the file DRY
+
+Example:
+
+```yaml
+defaults:
+  repository:
+    type: local
+    password_env: RESTIC_PASSWORD
+  retention:
+    keep_last: 7
+    keep_daily: 14
+
+jobs:
+  media:
+    source:
+      type: files
+      volume_name: media_data
+    schedule: "0 1 * * *"
+    repository:
+      path: /srv/restic/media
+
+  photos:
+    source:
+      type: files
+      volume_name: photos_data
+    schedule: "0 2 * * *"
+    repository:
+      path: /srv/restic/photos
+```
+
+Recommended precedence per volume:
+
+1. External config entry for the volume
+2. Volume labels
+3. Ignore the volume if neither defines a valid job
+
+Compose example:
+
+```yaml
+services:
+  dockvault:
+    environment:
+      DOCKVAULT_CONFIG_PATH: /etc/dockvault/config.yaml
+    volumes:
+      - ./dockvault/config.yaml:/etc/dockvault/config.yaml:ro
+```
+
+Sample file:
+
+- `dockvault.config.example.yaml`
+
 ## Environment Variables
 
 Required for backups:
@@ -76,6 +142,9 @@ Optional:
 - `DOCKVAULT_SERVER_URL`
   Default Dockvault API base URL for remote CLI commands such as `jobs`, `job`,
   `snapshots`, and `history`.
+- `DOCKVAULT_CONFIG_PATH`
+  Absolute path inside the Dockvault server container/process for the optional
+  retrofit YAML job config file.
 - `DOCKVAULT_API_TOKEN`
   Shared bearer token for mutating API requests. When set on the server,
   `POST` backup, check, and restore endpoints require

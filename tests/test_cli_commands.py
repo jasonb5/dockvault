@@ -1,4 +1,5 @@
 from typer.testing import CliRunner
+from types import SimpleNamespace
 
 import dockvault.cli as cli_module
 import dockvault.commands.backup as backup_module
@@ -26,7 +27,7 @@ def test_backup_list_prints_job_names(monkeypatch) -> None:
 
 
 def test_backup_create_runs_matching_jobs(monkeypatch) -> None:
-    job = object()
+    job = SimpleNamespace(name="alpha")
     captured = {}
 
     monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
@@ -69,8 +70,10 @@ def test_backup_create_fails_when_no_jobs_match(monkeypatch) -> None:
 
 
 def test_backup_create_fails_when_multiple_jobs_match(monkeypatch) -> None:
+    job = SimpleNamespace(name="duplicate")
+
     monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
-    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [object(), object()])
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [job, job])
 
     result = CliRunner().invoke(app, ["backup", "create", "duplicate"])
 
@@ -159,8 +162,10 @@ def test_restore_fails_when_no_jobs_match(monkeypatch) -> None:
 
 
 def test_backup_snapshots_fails_when_multiple_jobs_match(monkeypatch) -> None:
+    job = SimpleNamespace(name="duplicate")
+
     monkeypatch.setattr(backup_module, "_create_docker_client", lambda: object())
-    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [object(), object()])
+    monkeypatch.setattr(backup_module, "get_jobs", lambda client, labels=None: [job, job])
 
     result = CliRunner().invoke(app, ["backup", "snapshots", "duplicate"])
 

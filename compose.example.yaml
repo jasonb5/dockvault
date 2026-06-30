@@ -9,12 +9,14 @@ services:
     environment:
       RESTIC_PASSWORD: change-me
       DOCKVAULT_HOSTNAME: dockvault
+      DOCKVAULT_CONFIG_PATH: /etc/dockvault/config.yaml
       DOCKVAULT_MAX_CONCURRENT_BACKUPS: "1"
       DOCKVAULT_RETENTION_SCHEDULE: "30 3 * * *"
       DOCKVAULT_RETENTION_ARGS: "--keep-last 7 --keep-daily 14 --keep-weekly 8"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DOCKVAULT_REPOSITORY_ROOT:-/srv/restic}:${DOCKVAULT_REPOSITORY_ROOT:-/srv/restic}
+      - ./dockvault.config.example.yaml:/etc/dockvault/config.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 30s

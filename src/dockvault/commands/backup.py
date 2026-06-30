@@ -424,9 +424,8 @@ def _create_docker_client() -> DockerClient:
 
 def _get_jobs_by_name(name: str) -> list[BackupJobConfig]:
     client = _create_docker_client()
-    labels = [f"dockvault.name={name}"]
 
-    jobs = list(get_jobs(client, labels))
+    jobs = [job for job in get_jobs(client) if job.name == name]
 
     if not jobs:
         typer.echo(f"No job found with name '{name}'", err=True)
