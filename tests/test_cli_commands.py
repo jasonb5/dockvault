@@ -52,25 +52,6 @@ def test_backup_create_uses_remote_mode_when_server_is_configured(monkeypatch) -
 
     result = CliRunner().invoke(
         app,
-        ["backup", "create", "alpha", "--server", "http://dockvault:8000"],
-    )
-
-    assert result.exit_code == 0
-    assert result.stdout == '{\n  "name": "alpha",\n  "status": "ok"\n}\n'
-
-
-def test_backup_create_accepts_top_level_server_option(monkeypatch) -> None:
-    monkeypatch.setattr(
-        backup_module,
-        "trigger_remote_backup",
-        lambda server, name: {
-            "status": "ok",
-            "name": name,
-        },
-    )
-
-    result = CliRunner().invoke(
-        app,
         ["--server", "http://dockvault:8000", "backup", "create", "alpha"],
     )
 
@@ -222,25 +203,6 @@ def test_backup_check_runs_matching_jobs(monkeypatch) -> None:
 
 
 def test_backup_check_uses_remote_mode_when_server_is_configured(monkeypatch) -> None:
-    monkeypatch.setattr(
-        backup_module,
-        "trigger_remote_check",
-        lambda server, name: {
-            "status": "ok",
-            "name": name,
-        },
-    )
-
-    result = CliRunner().invoke(
-        app,
-        ["backup", "check", "alpha", "--server", "http://dockvault:8000"],
-    )
-
-    assert result.exit_code == 0
-    assert result.stdout == '{\n  "name": "alpha",\n  "status": "ok"\n}\n'
-
-
-def test_backup_check_accepts_top_level_server_option(monkeypatch) -> None:
     monkeypatch.setattr(
         backup_module,
         "trigger_remote_check",

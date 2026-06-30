@@ -210,15 +210,15 @@ uv run dockvault doctor
 uv run dockvault config scaffold > dockvault.config.yaml
 uv run dockvault config scaffold --schedule "0 2 * * *" --repository-root /srv/restic > dockvault.config.yaml
 uv run dockvault config scaffold --repository-password-env RESTIC_PASSWORD_MEDIA --retention-keep-weekly 8 > dockvault.config.yaml
-uv run dockvault config scaffold --server http://dockvault:8000 > dockvault.config.yaml
-uv run dockvault jobs --server http://dockvault:8000
-uv run dockvault job media-nightly --server http://dockvault:8000
-uv run dockvault snapshots media-nightly --server http://dockvault:8000
-uv run dockvault history media-nightly --server http://dockvault:8000
-uv run dockvault backup create media-nightly --server http://dockvault:8000
-uv run dockvault backup check media-nightly --server http://dockvault:8000
-uv run dockvault restore media-nightly latest --server http://dockvault:8000
-uv run dockvault restore media-nightly latest restore-target --path /photos/2024/image.jpg --server http://dockvault:8000
+uv run dockvault --server http://dockvault:8000 config scaffold > dockvault.config.yaml
+uv run dockvault --server http://dockvault:8000 jobs
+uv run dockvault --server http://dockvault:8000 job media-nightly
+uv run dockvault --server http://dockvault:8000 snapshots media-nightly
+uv run dockvault --server http://dockvault:8000 history media-nightly
+uv run dockvault --server http://dockvault:8000 backup create media-nightly
+uv run dockvault --server http://dockvault:8000 backup check media-nightly
+uv run dockvault --server http://dockvault:8000 restore media-nightly latest
+uv run dockvault --server http://dockvault:8000 restore media-nightly latest restore-target --path /photos/2024/image.jpg
 uv run dockvault restore media-nightly latest --dry-run
 uv run dockvault restore media-nightly latest --in-place
 uv run dockvault backup list-jobs
@@ -239,17 +239,17 @@ Command behavior:
 - scaffold generation also accepts override flags for generated defaults such
   as `--source-type`, `--repository-type`, `--repository-password-env`, and
   `--retention-keep-*`
-- `dockvault config scaffold --server <url>` asks a remote Dockvault server to
+- `dockvault --server <url> config scaffold` asks a remote Dockvault server to
   generate the same starter YAML from that server's Docker volume inventory
-- `dockvault jobs --server <url>` prints discovered jobs from a remote
+- `dockvault --server <url> jobs` prints discovered jobs from a remote
   Dockvault server
-- `dockvault job <name> --server <url>` prints one discovered job from a remote
+- `dockvault --server <url> job <name>` prints one discovered job from a remote
   Dockvault server
-- `dockvault snapshots <name> --server <url>` prints remote snapshot data for a
+- `dockvault --server <url> snapshots <name>` prints remote snapshot data for a
   discovered job
-- `dockvault history <name> --server <url>` prints remote in-memory run history
+- `dockvault --server <url> history <name>` prints remote in-memory run history
   for a discovered job
-- `dockvault restore <name> <snapshot> [target-volume] --server <url>` triggers
+- `dockvault --server <url> restore <name> <snapshot> [target-volume]` triggers
   a restore through a remote Dockvault server
 - `dockvault restore <name> <snapshot> [target-volume] --dry-run` previews the
   restore and prints the restic output without writing data
@@ -259,11 +259,11 @@ Command behavior:
   automatically
 - `dockvault backup list-jobs` prints discovered job names
 - `dockvault backup create <name>` runs matching jobs immediately
-- `dockvault backup create <name> --server <url>` triggers a backup
+- `dockvault --server <url> backup create <name>` triggers a backup
   through a remote Dockvault server
 - `dockvault backup snapshots <name>` prints matching job snapshots as JSON
 - `dockvault backup check <name>` runs `restic check` for matching job repositories
-- `dockvault backup check <name> --server <url>` triggers a repository check
+- `dockvault --server <url> backup check <name>` triggers a repository check
   through a remote Dockvault server
 - `dockvault restore <name> <snapshot> [target-volume]` restores a
   snapshot into an override volume when `target-volume` is provided

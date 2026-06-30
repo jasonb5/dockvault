@@ -115,12 +115,11 @@ def scaffold_config(
     retention_keep_weekly: int | None = typer.Option(None, "--retention-keep-weekly"),
     retention_keep_monthly: int | None = typer.Option(None, "--retention-keep-monthly"),
     retention_keep_yearly: int | None = typer.Option(None, "--retention-keep-yearly"),
-    server: str | None = typer.Option(None, "--server"),
 ) -> None:
-    if _server_is_configured(server):
+    if _server_is_configured(None):
         try:
             payload = get_remote_config_scaffold(
-                server,
+                None,
                 schedule,
                 repository_root,
                 source_type,
@@ -159,36 +158,36 @@ def scaffold_config(
 
 
 @app.command()
-def jobs(server: str | None = typer.Option(None, "--server")) -> None:
-    if _server_is_configured(server):
-        _print_remote_payload(get_remote_jobs, server)
+def jobs() -> None:
+    if _server_is_configured(None):
+        _print_remote_payload(get_remote_jobs, None)
         return
 
     _print_payload({"jobs": [_local_job_payload(job) for job in _get_local_jobs()]})
 
 
 @app.command()
-def job(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    if _server_is_configured(server):
-        _print_remote_payload(get_remote_job, server, name)
+def job(name: str) -> None:
+    if _server_is_configured(None):
+        _print_remote_payload(get_remote_job, None, name)
         return
 
     _print_payload(_local_job_payload(_get_jobs_by_name(name)[0]))
 
 
 @app.command()
-def snapshots(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    if _server_is_configured(server):
-        _print_remote_payload(get_remote_snapshots, server, name)
+def snapshots(name: str) -> None:
+    if _server_is_configured(None):
+        _print_remote_payload(get_remote_snapshots, None, name)
         return
 
     _print_payload({"snapshots": list_snapshots_for_job(_get_jobs_by_name(name)[0])})
 
 
 @app.command()
-def history(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    if _server_is_configured(server):
-        _print_remote_payload(get_remote_history, server, name)
+def history(name: str) -> None:
+    if _server_is_configured(None):
+        _print_remote_payload(get_remote_history, None, name)
         return
 
     job_config = _get_jobs_by_name(name)[0]
@@ -203,12 +202,11 @@ def restore(
     path: str | None = typer.Option(None, "--path"),
     in_place: bool = typer.Option(False, "--in-place", help="Allow restore into the source volume"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview restore without writing data"),
-    server: str | None = typer.Option(None, "--server"),
 ) -> None:
-    if _server_is_configured(server):
+    if _server_is_configured(None):
         _print_remote_payload(
             restore_remote,
-            server,
+            None,
             name,
             snapshot,
             target_volume,

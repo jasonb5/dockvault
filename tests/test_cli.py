@@ -75,19 +75,10 @@ def test_doctor_fails_when_job_configuration_is_incomplete(monkeypatch) -> None:
 def test_jobs_fetches_remote_payload(monkeypatch) -> None:
     monkeypatch.setattr(cli_module, "get_remote_jobs", lambda server: {"jobs": [{"name": "alpha"}]})
 
-    result = CliRunner().invoke(app, ["jobs", "--server", "http://dockvault:8000"])
-
-    assert result.exit_code == 0
-    assert result.stdout == '{\n  "jobs": [\n    {\n      "name": "alpha"\n    }\n  ]\n}\n'
-
-
-def test_jobs_accepts_top_level_server_option(monkeypatch) -> None:
-    monkeypatch.setattr(cli_module, "get_remote_jobs", lambda server: {"jobs": [{"name": "alpha"}]})
-
     result = CliRunner().invoke(app, ["--server", "http://dockvault:8000", "jobs"])
 
     assert result.exit_code == 0
-    assert '"name": "alpha"' in result.stdout
+    assert result.stdout == '{\n  "jobs": [\n    {\n      "name": "alpha"\n    }\n  ]\n}\n'
 
 
 def test_jobs_uses_local_discovery_by_default(monkeypatch) -> None:
@@ -113,7 +104,7 @@ def test_jobs_uses_local_discovery_by_default(monkeypatch) -> None:
 def test_job_fetches_remote_payload(monkeypatch) -> None:
     monkeypatch.setattr(cli_module, "get_remote_job", lambda server, name: {"name": name})
 
-    result = CliRunner().invoke(app, ["job", "alpha", "--server", "http://dockvault:8000"])
+    result = CliRunner().invoke(app, ["--server", "http://dockvault:8000", "job", "alpha"])
 
     assert result.exit_code == 0
     assert result.stdout == '{\n  "name": "alpha"\n}\n'
@@ -144,7 +135,7 @@ def test_snapshots_fetches_remote_payload(monkeypatch) -> None:
         lambda server, name: {"snapshots": [{"id": "abc123"}]},
     )
 
-    result = CliRunner().invoke(app, ["snapshots", "alpha", "--server", "http://dockvault:8000"])
+    result = CliRunner().invoke(app, ["--server", "http://dockvault:8000", "snapshots", "alpha"])
 
     assert result.exit_code == 0
     assert result.stdout == '{\n  "snapshots": [\n    {\n      "id": "abc123"\n    }\n  ]\n}\n'
@@ -166,7 +157,7 @@ def test_snapshots_uses_local_lookup_by_default(monkeypatch) -> None:
 def test_history_fetches_remote_payload(monkeypatch) -> None:
     monkeypatch.setattr(cli_module, "get_remote_history", lambda server, name: {"runs": []})
 
-    result = CliRunner().invoke(app, ["history", "alpha", "--server", "http://dockvault:8000"])
+    result = CliRunner().invoke(app, ["--server", "http://dockvault:8000", "history", "alpha"])
 
     assert result.exit_code == 0
     assert result.stdout == '{\n  "runs": []\n}\n'
@@ -192,7 +183,7 @@ def test_jobs_reports_remote_client_errors(monkeypatch) -> None:
         lambda server: (_ for _ in ()).throw(cli_module.DockvaultClientError("server down")),
     )
 
-    result = CliRunner().invoke(app, ["jobs", "--server", "http://dockvault:8000"])
+    result = CliRunner().invoke(app, ["--server", "http://dockvault:8000", "jobs"])
 
     assert result.exit_code == 1
     assert result.stderr == "server down\n"
@@ -265,22 +256,6 @@ def test_config_scaffold_uses_remote_mode(monkeypatch) -> None:
 
     result = CliRunner().invoke(
         app,
-        ["config", "scaffold", "--server", "http://dockvault:8000"],
-    )
-
-    assert result.exit_code == 0
-    assert result.stdout == "jobs:\n  alpha: {}\n"
-
-
-def test_config_scaffold_accepts_top_level_server_option(monkeypatch) -> None:
-    monkeypatch.setattr(
-        cli_module,
-        "get_remote_config_scaffold",
-        lambda server, schedule, repository_root, source_type, repository_type, repository_password_env, retention_keep_last, retention_keep_daily, retention_keep_weekly, retention_keep_monthly, retention_keep_yearly: {"config": "jobs:\n  alpha: {}\n"},
-    )
-
-    result = CliRunner().invoke(
-        app,
         ["--server", "http://dockvault:8000", "config", "scaffold"],
     )
 
@@ -306,14 +281,14 @@ def test_restore_uses_remote_mode_when_server_is_configured(monkeypatch) -> None
     result = CliRunner().invoke(
         app,
         [
+            "--server",
+            "http://dockvault:8000",
             "restore",
             "alpha",
             "latest",
             "restore-target",
             "--path",
             "/photos/2024",
-            "--server",
-            "http://dockvault:8000",
         ],
     )
 

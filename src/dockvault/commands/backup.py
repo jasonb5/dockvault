@@ -44,11 +44,10 @@ def list_jobs():
 @app.command()
 def create(
     name: str,
-    server: str | None = typer.Option(None, "--server"),
 ):
-    if server or get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"):
+    if get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"):
         try:
-            payload = trigger_remote_backup(server, name)
+            payload = trigger_remote_backup(None, name)
         except DockvaultClientError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
@@ -67,10 +66,10 @@ def snapshots(name: str) -> None:
 
 
 @app.command()
-def check(name: str, server: str | None = typer.Option(None, "--server")) -> None:
-    if server or get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"):
+def check(name: str) -> None:
+    if get_server_url_override() or os.getenv("DOCKVAULT_SERVER_URL"):
         try:
-            payload = trigger_remote_check(server, name)
+            payload = trigger_remote_check(None, name)
         except DockvaultClientError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
