@@ -207,6 +207,10 @@ Common commands:
 uv run dockvault version
 uv run dockvault server
 uv run dockvault doctor
+uv run dockvault config scaffold > dockvault.config.yaml
+uv run dockvault config scaffold --schedule "0 2 * * *" --repository-root /srv/restic > dockvault.config.yaml
+uv run dockvault config scaffold --repository-password-env RESTIC_PASSWORD_MEDIA --retention-keep-weekly 8 > dockvault.config.yaml
+uv run dockvault config scaffold --server http://dockvault:8000 > dockvault.config.yaml
 uv run dockvault jobs --server http://dockvault:8000
 uv run dockvault job media-nightly --server http://dockvault:8000
 uv run dockvault snapshots media-nightly --server http://dockvault:8000
@@ -230,6 +234,13 @@ Command behavior:
 - `dockvault server` starts the API and scheduler on `0.0.0.0:8000`
 - `dockvault doctor` verifies Docker access, discovered jobs, required password
   environment variables, and repository path mounts inside the container
+- `dockvault config scaffold` prints a starter YAML config for all current
+  Docker volumes using the selected schedule and repository root
+- scaffold generation also accepts override flags for generated defaults such
+  as `--source-type`, `--repository-type`, `--repository-password-env`, and
+  `--retention-keep-*`
+- `dockvault config scaffold --server <url>` asks a remote Dockvault server to
+  generate the same starter YAML from that server's Docker volume inventory
 - `dockvault jobs --server <url>` prints discovered jobs from a remote
   Dockvault server
 - `dockvault job <name> --server <url>` prints one discovered job from a remote

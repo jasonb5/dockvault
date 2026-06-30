@@ -8,6 +8,7 @@ from dockvault.api import (
     _readiness_payload,
     backup_job,
     check_job,
+    get_config_scaffold,
     get_job,
     get_job_history,
     get_job_snapshots,
@@ -184,6 +185,37 @@ def test_list_jobs_returns_discovered_jobs_with_next_run_time(monkeypatch) -> No
             },
         ]
     }
+
+
+def test_get_config_scaffold_returns_generated_yaml(monkeypatch) -> None:
+    volumes = [SimpleNamespace(name="alpha_data", attrs={"Labels": {}})]
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.api.list_volumes", lambda client: volumes)
+
+    response = get_config_scaffold(schedule="0 2 * * *", repository_root="/backup/root")
+
+    assert "defaults:" in response["config"]
+    assert "alpha_data:" in response["config"]
+    assert "schedule: 0 2 * * *" in response["config"]
+    assert "path: /backup/root/alpha_data" in response["config"]
+
+
+def test_get_config_scaffold_applies_override_defaults(monkeypatch) -> None:
+    volumes = [SimpleNamespace(name="alpha_data", attrs={"Labels": {}})]
+
+    monkeypatch.setattr("dockvault.api.create_docker_client", lambda: object())
+    monkeypatch.setattr("dockvault.api.list_volumes", lambda client: volumes)
+
+    response = get_config_scaffold(
+        source_type="files",
+        repository_type="local",
+        repository_password_env="ALT_PASSWORD",
+        retention_keep_weekly=8,
+    )
+
+    assert "password_env: ALT_PASSWORD" in response["config"]
+    assert "keep_weekly: 8" in response["config"]
 
 
 def test_get_job_returns_matching_job(monkeypatch) -> None:

@@ -8,6 +8,7 @@ import uvicorn
 
 from dockvault.client import (
     DockvaultClientError,
+    get_config_scaffold as get_remote_config_scaffold,
     get_history as get_remote_history,
     get_job as get_remote_job,
     get_jobs as get_remote_jobs,
@@ -16,11 +17,13 @@ from dockvault.client import (
 )
 from dockvault.commands.backup import app as backup_app
 from dockvault.commands.backup import _get_jobs_by_name, list_snapshots_for_job, run_restore
-from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
+from dockvault.config import render_scaffold_config
+from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs, list_volumes
 from dockvault.history import get_backup_history, get_last_backup_run
 from dockvault.logging import LOGGING_CONFIG, setup_logging
 
 app = typer.Typer(help="dockvault")
+config_app = typer.Typer(help="config helpers")
 
 
 @app.command()
@@ -86,6 +89,62 @@ def _get_local_jobs() -> list:
 
 
 app.add_typer(backup_app, name="backup")
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("scaffold")
+def scaffold_config(
+    schedule: str = typer.Option("0 1 * * *", "--schedule"),
+    repository_root: str = typer.Option("/srv/restic", "--repository-root"),
+    source_type: str | None = typer.Option(None, "--source-type"),
+    repository_type: str | None = typer.Option(None, "--repository-type"),
+    repository_password_env: str | None = typer.Option(None, "--repository-password-env"),
+    retention_keep_last: int | None = typer.Option(None, "--retention-keep-last"),
+    retention_keep_daily: int | None = typer.Option(None, "--retention-keep-daily"),
+    retention_keep_weekly: int | None = typer.Option(None, "--retention-keep-weekly"),
+    retention_keep_monthly: int | None = typer.Option(None, "--retention-keep-monthly"),
+    retention_keep_yearly: int | None = typer.Option(None, "--retention-keep-yearly"),
+    server: str | None = typer.Option(None, "--server"),
+) -> None:
+    if _server_is_configured(server):
+        try:
+            payload = get_remote_config_scaffold(
+                server,
+                schedule,
+                repository_root,
+                source_type,
+                repository_type,
+                repository_password_env,
+                retention_keep_last,
+                retention_keep_daily,
+                retention_keep_weekly,
+                retention_keep_monthly,
+                retention_keep_yearly,
+            )
+        except DockvaultClientError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+        typer.echo(payload["config"], nl=False)
+        return
+
+    client = create_docker_client()
+    typer.echo(
+        render_scaffold_config(
+            list_volumes(client),
+            schedule=schedule,
+            repository_root=repository_root,
+            source_type=source_type,
+            repository_type=repository_type,
+            repository_password_env=repository_password_env,
+            retention_keep_last=retention_keep_last,
+            retention_keep_daily=retention_keep_daily,
+            retention_keep_weekly=retention_keep_weekly,
+            retention_keep_monthly=retention_keep_monthly,
+            retention_keep_yearly=retention_keep_yearly,
+        ),
+        nl=False,
+    )
 
 
 @app.command()

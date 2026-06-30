@@ -1,7 +1,7 @@
 import json
 import os
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -67,6 +67,35 @@ def _request_json(server: str | None, path: str, payload: dict | None) -> dict:
 
 def get_jobs(server: str | None) -> dict:
     return get_json(server, "/jobs")
+
+
+def get_config_scaffold(
+    server: str | None,
+    schedule: str,
+    repository_root: str,
+    source_type: str | None = None,
+    repository_type: str | None = None,
+    repository_password_env: str | None = None,
+    retention_keep_last: int | None = None,
+    retention_keep_daily: int | None = None,
+    retention_keep_weekly: int | None = None,
+    retention_keep_monthly: int | None = None,
+    retention_keep_yearly: int | None = None,
+) -> dict:
+    query_params = {
+        "schedule": schedule,
+        "repository_root": repository_root,
+        "source_type": source_type,
+        "repository_type": repository_type,
+        "repository_password_env": repository_password_env,
+        "retention_keep_last": retention_keep_last,
+        "retention_keep_daily": retention_keep_daily,
+        "retention_keep_weekly": retention_keep_weekly,
+        "retention_keep_monthly": retention_keep_monthly,
+        "retention_keep_yearly": retention_keep_yearly,
+    }
+    query = urlencode({key: value for key, value in query_params.items() if value is not None})
+    return get_json(server, f"/config/scaffold?{query}")
 
 
 def get_job(server: str | None, name: str) -> dict:

@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from dockvault.models.job import PREFIX
+from dockvault.models.job import PREFIX, labels_to_config
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,133 @@ def load_server_default_job_config() -> dict[str, Any]:
         config["retention"] = retention
 
     return config
+
+
+def build_scaffold_config(
+    volumes: list[Any],
+    *,
+    schedule: str,
+    repository_root: str,
+    source_type: str | None = None,
+    repository_type: str | None = None,
+    repository_password_env: str | None = None,
+    retention_keep_last: int | None = None,
+    retention_keep_daily: int | None = None,
+    retention_keep_weekly: int | None = None,
+    retention_keep_monthly: int | None = None,
+    retention_keep_yearly: int | None = None,
+) -> dict[str, Any]:
+    server_defaults = load_server_default_job_config()
+    source_defaults = server_defaults.get("source", {})
+    repository_defaults = server_defaults.get("repository", {})
+    retention_defaults = copy.deepcopy(server_defaults.get("retention", {}))
+
+    if source_type is not None:
+        source_defaults = merge_job_config(source_defaults, {"type": source_type})
+
+    repository_override: dict[str, Any] = {}
+    if repository_type is not None:
+        repository_override["type"] = repository_type
+    if repository_password_env is not None:
+        repository_override["password_env"] = repository_password_env
+    if repository_override:
+        repository_defaults = merge_job_config(repository_defaults, repository_override)
+
+    for key, value in (
+        ("keep_last", retention_keep_last),
+        ("keep_daily", retention_keep_daily),
+        ("keep_weekly", retention_keep_weekly),
+        ("keep_monthly", retention_keep_monthly),
+        ("keep_yearly", retention_keep_yearly),
+    ):
+        if value is not None:
+            retention_defaults[key] = value
+
+    defaults: dict[str, Any] = {
+        "source": {
+            "type": str(source_defaults.get("type", "files")),
+        },
+        "repository": {
+            "type": str(repository_defaults.get("type", "local")),
+            "password_env": str(repository_defaults.get("password_env", "RESTIC_PASSWORD")),
+        },
+    }
+    if retention_defaults:
+        defaults["retention"] = copy.deepcopy(retention_defaults)
+
+    jobs: dict[str, Any] = {}
+    normalized_repository_root = repository_root.rstrip("/") or "/"
+
+    for volume in sorted(volumes, key=lambda item: item.name):
+        labels = volume.attrs.get("Labels") or {}
+        label_config = labels_to_config(labels)
+        repository_config = label_config.get("repository", {})
+        source_config = label_config.get("source", {})
+        retention_config = label_config.get("retention")
+
+        job_name = str(label_config.get("name") or volume.name)
+        job: dict[str, Any] = {
+            "source": {
+                "volume_name": volume.name,
+            },
+            "schedule": str(label_config.get("schedule") or schedule),
+            "repository": {
+                "path": str(
+                    repository_config.get("path")
+                    or _join_repository_path(normalized_repository_root, volume.name)
+                ),
+            },
+        }
+
+        if source_config.get("type") not in (None, defaults["source"]["type"]):
+            job["source"]["type"] = str(source_config["type"])
+
+        for key in ("type", "password_env"):
+            value = repository_config.get(key)
+            if value not in (None, defaults["repository"][key]):
+                job["repository"][key] = str(value)
+
+        if retention_config:
+            job["retention"] = copy.deepcopy(retention_config)
+
+        jobs[job_name] = job
+
+    return {
+        "defaults": defaults,
+        "jobs": jobs,
+    }
+
+
+def render_scaffold_config(
+    volumes: list[Any],
+    *,
+    schedule: str,
+    repository_root: str,
+    source_type: str | None = None,
+    repository_type: str | None = None,
+    repository_password_env: str | None = None,
+    retention_keep_last: int | None = None,
+    retention_keep_daily: int | None = None,
+    retention_keep_weekly: int | None = None,
+    retention_keep_monthly: int | None = None,
+    retention_keep_yearly: int | None = None,
+) -> str:
+    return yaml.safe_dump(
+        build_scaffold_config(
+            volumes,
+            schedule=schedule,
+            repository_root=repository_root,
+            source_type=source_type,
+            repository_type=repository_type,
+            repository_password_env=repository_password_env,
+            retention_keep_last=retention_keep_last,
+            retention_keep_daily=retention_keep_daily,
+            retention_keep_weekly=retention_keep_weekly,
+            retention_keep_monthly=retention_keep_monthly,
+            retention_keep_yearly=retention_keep_yearly,
+        ),
+        sort_keys=False,
+    )
 
 
 def load_external_job_configs() -> dict[str, dict[str, Any]]:
@@ -156,6 +283,13 @@ def _get_env_value(name: str) -> str | None:
         return None
 
     return normalized
+
+
+def _join_repository_path(root: str, volume_name: str) -> str:
+    if root == "/":
+        return f"/{volume_name}"
+
+    return f"{root}/{volume_name}"
 
 
 def matches_label_filters(

@@ -199,6 +199,70 @@ def test_jobs_uses_env_configured_remote_mode(monkeypatch) -> None:
     assert '"name": "alpha"' in result.stdout
 
 
+def test_config_scaffold_uses_local_volume_discovery(monkeypatch) -> None:
+    volumes = [
+        SimpleNamespace(name="alpha_data", attrs={"Labels": {}}),
+    ]
+
+    monkeypatch.delenv("DOCKVAULT_SERVER_URL", raising=False)
+    monkeypatch.setattr(cli_module, "create_docker_client", lambda: object())
+    monkeypatch.setattr(cli_module, "list_volumes", lambda client: volumes)
+
+    result = CliRunner().invoke(app, ["config", "scaffold", "--schedule", "0 2 * * *"])
+
+    assert result.exit_code == 0
+    assert "defaults:" in result.stdout
+    assert "alpha_data:" in result.stdout
+    assert 'schedule: 0 2 * * *' in result.stdout
+    assert 'path: /srv/restic/alpha_data' in result.stdout
+
+
+def test_config_scaffold_applies_override_defaults(monkeypatch) -> None:
+    volumes = [
+        SimpleNamespace(name="alpha_data", attrs={"Labels": {}}),
+    ]
+
+    monkeypatch.delenv("DOCKVAULT_SERVER_URL", raising=False)
+    monkeypatch.setattr(cli_module, "create_docker_client", lambda: object())
+    monkeypatch.setattr(cli_module, "list_volumes", lambda client: volumes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "config",
+            "scaffold",
+            "--source-type",
+            "files",
+            "--repository-type",
+            "local",
+            "--repository-password-env",
+            "ALT_PASSWORD",
+            "--retention-keep-weekly",
+            "8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert 'password_env: ALT_PASSWORD' in result.stdout
+    assert 'keep_weekly: 8' in result.stdout
+
+
+def test_config_scaffold_uses_remote_mode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "get_remote_config_scaffold",
+        lambda server, schedule, repository_root, source_type, repository_type, repository_password_env, retention_keep_last, retention_keep_daily, retention_keep_weekly, retention_keep_monthly, retention_keep_yearly: {"config": "jobs:\n  alpha: {}\n"},
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["config", "scaffold", "--server", "http://dockvault:8000"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "jobs:\n  alpha: {}\n"
+
+
 def test_restore_uses_remote_mode_when_server_is_configured(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_module,

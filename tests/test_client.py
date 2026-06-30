@@ -115,6 +115,29 @@ def test_backup_posts_remote_payload(monkeypatch) -> None:
     assert seen["body"] == '{}'
 
 
+def test_get_config_scaffold_fetches_remote_payload(monkeypatch) -> None:
+    seen = {}
+
+    def _urlopen(request):
+        seen["url"] = request.full_url
+        return _FakeResponse(b'{"config": "jobs: {}\\n"}')
+
+    monkeypatch.setattr(client, "urlopen", _urlopen)
+
+    assert client.get_config_scaffold(
+        "http://dockvault:8000",
+        "0 2 * * *",
+        "/backup/root",
+        source_type="files",
+        repository_type="local",
+        repository_password_env="ALT_PASSWORD",
+        retention_keep_weekly=8,
+    ) == {
+        "config": "jobs: {}\n"
+    }
+    assert seen["url"] == "http://dockvault:8000/config/scaffold?schedule=0+2+%2A+%2A+%2A&repository_root=%2Fbackup%2Froot&source_type=files&repository_type=local&repository_password_env=ALT_PASSWORD&retention_keep_weekly=8"
+
+
 def test_check_posts_remote_payload(monkeypatch) -> None:
     seen = {}
 

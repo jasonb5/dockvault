@@ -32,6 +32,14 @@ def create_docker_client() -> DockerClient:
     return client
 
 
+def list_volumes(client: DockerClient, filters: dict | None = None) -> list:
+    try:
+        return list(client.volumes.list(filters=filters))
+    except APIError as e:
+        logger.warning("Failed to list docker volumes %s", e)
+        raise JobDiscoveryError("failed to list docker volumes") from e
+
+
 def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[BackupJobConfig]:
     requested_labels = list(labels or [])
     default_config = load_server_default_job_config()
@@ -43,10 +51,9 @@ def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[
         raise JobDiscoveryError("failed to load external job config") from exc
 
     try:
-        raw_volumes = client.volumes.list(filters={"label": ["dockvault.enabled"]})
-    except APIError as e:
-        logger.warning("Failed to list docker volumes %s", e)
-        raise JobDiscoveryError("failed to list docker volumes") from e
+        raw_volumes = list_volumes(client, filters={"label": ["dockvault.enabled"]})
+    except JobDiscoveryError:
+        raise
 
     volumes_by_name = {volume.name: volume for volume in raw_volumes}
 

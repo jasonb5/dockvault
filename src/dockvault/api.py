@@ -7,7 +7,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from dockvault.commands.backup import list_snapshots_for_job, run_backup, run_check, run_restore
-from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs
+from dockvault.config import render_scaffold_config
+from dockvault.docker import JobDiscoveryError, create_docker_client, get_jobs, list_volumes
 from dockvault.history import get_backup_history, get_last_backup_run
 from dockvault.models.job import BackupJobConfig
 from dockvault.scheduler import create_scheduler
@@ -132,6 +133,32 @@ def _discover_jobs() -> list[BackupJobConfig]:
         ) from exc
 
 
+def _discover_volumes() -> list:
+    try:
+        client = create_docker_client()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=_error_detail(
+                "docker_unavailable",
+                "Docker is unavailable for volume discovery",
+                error=str(exc),
+            ),
+        ) from exc
+
+    try:
+        return list_volumes(client)
+    except JobDiscoveryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=_error_detail(
+                "volume_discovery_failed",
+                "Volume discovery failed",
+                error=str(exc),
+            ),
+        ) from exc
+
+
 def _get_job_by_name(name: str) -> BackupJobConfig:
     for job in _discover_jobs():
         if job.name == name:
@@ -186,6 +213,38 @@ def list_jobs(request: Request) -> dict[str, list[dict]]:
     jobs = sorted(_discover_jobs(), key=lambda job: job.name or "")
 
     return {"jobs": [_job_payload(request.app, job) for job in jobs]}
+
+
+@app.get("/config/scaffold")
+def get_config_scaffold(
+    schedule: str = "0 1 * * *",
+    repository_root: str = "/srv/restic",
+    source_type: str | None = None,
+    repository_type: str | None = None,
+    repository_password_env: str | None = None,
+    retention_keep_last: int | None = None,
+    retention_keep_daily: int | None = None,
+    retention_keep_weekly: int | None = None,
+    retention_keep_monthly: int | None = None,
+    retention_keep_yearly: int | None = None,
+) -> dict[str, str]:
+    volumes = _discover_volumes()
+
+    return {
+        "config": render_scaffold_config(
+            volumes,
+            schedule=schedule,
+            repository_root=repository_root,
+            source_type=source_type,
+            repository_type=repository_type,
+            repository_password_env=repository_password_env,
+            retention_keep_last=retention_keep_last,
+            retention_keep_daily=retention_keep_daily,
+            retention_keep_weekly=retention_keep_weekly,
+            retention_keep_monthly=retention_keep_monthly,
+            retention_keep_yearly=retention_keep_yearly,
+        )
+    }
 
 
 @app.get("/jobs/{name}")
