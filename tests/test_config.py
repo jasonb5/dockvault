@@ -2,7 +2,12 @@ import textwrap
 
 import pytest
 
-from dockvault.config import ExternalConfigError, load_external_job_configs, matches_label_filters
+from dockvault.config import (
+    ExternalConfigError,
+    load_external_job_configs,
+    load_server_default_job_config,
+    matches_label_filters,
+)
 
 
 def test_load_external_job_configs_applies_defaults(tmp_path, monkeypatch) -> None:
@@ -71,3 +76,23 @@ def test_matches_label_filters_treats_external_job_as_enabled() -> None:
         volume_labels={},
         has_external_config=True,
     )
+
+
+def test_load_server_default_job_config_reads_shared_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_SOURCE_TYPE", "files")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_REPOSITORY_TYPE", "local")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_REPOSITORY_PASSWORD_ENV", "SERVER_PASSWORD")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_RETENTION_KEEP_LAST", "7")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_RETENTION_KEEP_DAILY", "14")
+
+    assert load_server_default_job_config() == {
+        "source": {"type": "files"},
+        "repository": {
+            "type": "local",
+            "password_env": "SERVER_PASSWORD",
+        },
+        "retention": {
+            "keep_last": "7",
+            "keep_daily": "14",
+        },
+    }

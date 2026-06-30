@@ -11,10 +11,52 @@ from dockvault.models.job import PREFIX
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH_ENV = "DOCKVAULT_CONFIG_PATH"
+DEFAULT_SOURCE_TYPE_ENV = "DOCKVAULT_DEFAULT_SOURCE_TYPE"
+DEFAULT_REPOSITORY_TYPE_ENV = "DOCKVAULT_DEFAULT_REPOSITORY_TYPE"
+DEFAULT_REPOSITORY_PASSWORD_ENV = "DOCKVAULT_DEFAULT_REPOSITORY_PASSWORD_ENV"
+DEFAULT_RETENTION_ENVS = {
+    "keep_last": "DOCKVAULT_DEFAULT_RETENTION_KEEP_LAST",
+    "keep_daily": "DOCKVAULT_DEFAULT_RETENTION_KEEP_DAILY",
+    "keep_weekly": "DOCKVAULT_DEFAULT_RETENTION_KEEP_WEEKLY",
+    "keep_monthly": "DOCKVAULT_DEFAULT_RETENTION_KEEP_MONTHLY",
+    "keep_yearly": "DOCKVAULT_DEFAULT_RETENTION_KEEP_YEARLY",
+}
 
 
 class ExternalConfigError(RuntimeError):
     pass
+
+
+def load_server_default_job_config() -> dict[str, Any]:
+    config: dict[str, Any] = {}
+
+    source_type = _get_env_value(DEFAULT_SOURCE_TYPE_ENV)
+    if source_type is not None:
+        config["source"] = {"type": source_type}
+
+    repository: dict[str, Any] = {}
+
+    repository_type = _get_env_value(DEFAULT_REPOSITORY_TYPE_ENV)
+    if repository_type is not None:
+        repository["type"] = repository_type
+
+    repository_password_env = _get_env_value(DEFAULT_REPOSITORY_PASSWORD_ENV)
+    if repository_password_env is not None:
+        repository["password_env"] = repository_password_env
+
+    if repository:
+        config["repository"] = repository
+
+    retention: dict[str, Any] = {}
+    for key, env_name in DEFAULT_RETENTION_ENVS.items():
+        value = _get_env_value(env_name)
+        if value is not None:
+            retention[key] = value
+
+    if retention:
+        config["retention"] = retention
+
+    return config
 
 
 def load_external_job_configs() -> dict[str, dict[str, Any]]:
@@ -100,6 +142,20 @@ def merge_job_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str
             merged[key] = copy.deepcopy(value)
 
     return merged
+
+
+def _get_env_value(name: str) -> str | None:
+    value = os.getenv(name)
+
+    if value is None:
+        return None
+
+    normalized = value.strip()
+
+    if not normalized:
+        return None
+
+    return normalized
 
 
 def matches_label_filters(

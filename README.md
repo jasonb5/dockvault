@@ -115,7 +115,8 @@ Recommended precedence per volume:
 
 1. External config entry for the volume
 2. Volume labels
-3. Ignore the volume if neither defines a valid job
+3. Server-side env defaults
+4. Ignore the volume if neither defines a valid job
 
 Compose example:
 
@@ -149,6 +150,21 @@ Optional:
   Shared bearer token for mutating API requests. When set on the server,
   `POST` backup, check, and restore endpoints require
   `Authorization: Bearer <token>`. Set the same value for remote CLI usage.
+- `DOCKVAULT_DEFAULT_SOURCE_TYPE`
+  Optional default `source.type` for discovered jobs. Useful for reducing
+  repeated `dockvault.source.type=files` labels.
+- `DOCKVAULT_DEFAULT_REPOSITORY_TYPE`
+  Optional default `repository.type` for discovered jobs. Useful for reducing
+  repeated `dockvault.repository.type=local` labels.
+- `DOCKVAULT_DEFAULT_REPOSITORY_PASSWORD_ENV`
+  Optional default `repository.password_env` for discovered jobs.
+- `DOCKVAULT_DEFAULT_RETENTION_KEEP_LAST`
+- `DOCKVAULT_DEFAULT_RETENTION_KEEP_DAILY`
+- `DOCKVAULT_DEFAULT_RETENTION_KEEP_WEEKLY`
+- `DOCKVAULT_DEFAULT_RETENTION_KEEP_MONTHLY`
+- `DOCKVAULT_DEFAULT_RETENTION_KEEP_YEARLY`
+  Optional default retention policy for discovered jobs. These values are
+  overridden by volume labels and external config.
 - `DOCKVAULT_HOSTNAME`
   Hostname to attach to backups. If unset, Dockvault uses the current host
   name.

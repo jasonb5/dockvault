@@ -6,7 +6,13 @@ from docker import DockerClient
 from docker.errors import APIError, NotFound
 from pydantic import ValidationError
 
-from dockvault.config import ExternalConfigError, load_external_job_configs, matches_label_filters, merge_job_config
+from dockvault.config import (
+    ExternalConfigError,
+    load_external_job_configs,
+    load_server_default_job_config,
+    matches_label_filters,
+    merge_job_config,
+)
 from dockvault.models.job import BackupJobConfig, labels_to_config
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,7 @@ def create_docker_client() -> DockerClient:
 
 def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[BackupJobConfig]:
     requested_labels = list(labels or [])
+    default_config = load_server_default_job_config()
 
     try:
         external_configs = load_external_job_configs()
@@ -65,6 +72,8 @@ def get_jobs(client: DockerClient, labels: list[str] | None = None) -> Iterator[
             logger.warning("Failed to convert labels for volume %s to config", volume.name)
 
             continue
+
+        config = merge_job_config(default_config, config)
 
         if has_external_config:
             config = merge_job_config(config, external_configs[volume.name])

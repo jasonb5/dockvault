@@ -96,6 +96,85 @@ jobs:
     assert jobs[0].repository.path == "/srv/restic/media"
 
 
+def test_get_jobs_applies_server_env_defaults_to_label_discovered_volume(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_SOURCE_TYPE", "files")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_REPOSITORY_TYPE", "local")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_REPOSITORY_PASSWORD_ENV", "SERVER_PASSWORD")
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_RETENTION_KEEP_WEEKLY", "8")
+
+    volume = SimpleNamespace(
+        name="media_data",
+        attrs={
+            "Labels": {
+                "dockvault.enabled": "true",
+                "dockvault.name": "media",
+                "dockvault.schedule": "0 1 * * *",
+                "dockvault.repository.path": "/srv/restic/media",
+            }
+        },
+    )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.volumes = self
+
+        def list(self, filters):
+            return [volume]
+
+        def get(self, name):
+            raise AssertionError(f"unexpected get({name})")
+
+    jobs = list(get_jobs(FakeClient()))
+
+    assert len(jobs) == 1
+    assert jobs[0].source.type == "files"
+    assert jobs[0].repository.type == "local"
+    assert jobs[0].repository.password_env == "SERVER_PASSWORD"
+    assert jobs[0].retention is not None
+    assert jobs[0].retention.keep_weekly == 8
+
+
+def test_external_config_overrides_server_env_defaults(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "dockvault.yaml"
+    config_path.write_text(
+        """
+jobs:
+  media:
+    source:
+      type: files
+      volume_name: media_data
+    schedule: "0 1 * * *"
+    repository:
+      type: local
+      path: /srv/restic/media
+      password_env: CONFIG_PASSWORD
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DOCKVAULT_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DOCKVAULT_DEFAULT_REPOSITORY_PASSWORD_ENV", "SERVER_PASSWORD")
+
+    volume = SimpleNamespace(name="media_data", attrs={"Labels": {}})
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.volumes = self
+
+        def list(self, filters):
+            return []
+
+        def get(self, name):
+            return volume
+
+    jobs = list(get_jobs(FakeClient()))
+
+    assert len(jobs) == 1
+    assert jobs[0].repository.password_env == "CONFIG_PASSWORD"
+
+
 def test_get_jobs_external_config_overrides_labels(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "dockvault.yaml"
     config_path.write_text(
